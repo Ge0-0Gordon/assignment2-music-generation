@@ -187,3 +187,137 @@ conda run -n cse253 python scripts\check_env.py
 ### Next Step
 
 - Proceed to Phase 1 only after user approval: tiny dataset smoke test.
+
+## 2026-05-26: Part A - Environment Refresh After User Install
+
+### Scope
+
+- Verified that `transformers` and `pandas` are now importable in `cse253`.
+- Verified that a tiny GPT-2-style causal Transformer can be initialized from scratch with `GPT2Config` and `GPT2LMHeadModel`.
+- Did not call `from_pretrained("gpt2")`.
+- Did not download or load pretrained weights.
+
+### Commands Run
+
+```powershell
+conda run -n cse253 python -c "import importlib.util; mods=['transformers','pandas']; [print(m, importlib.util.find_spec(m) is not None) for m in mods]"
+conda run -n cse253 python -c "import torch; from transformers import GPT2Config, GPT2LMHeadModel; config=GPT2Config(vocab_size=32,n_positions=16,n_ctx=16,n_embd=16,n_layer=1,n_head=2,bos_token_id=0,eos_token_id=1); model=GPT2LMHeadModel(config); x=torch.randint(0,32,(2,8)); y=model(input_ids=x, labels=x); print('model_class', model.__class__.__name__); print('params', sum(p.numel() for p in model.parameters())); print('loss_finite', torch.isfinite(y.loss).item()); print('logits_shape', tuple(y.logits.shape)); print('pretrained_loaded', False)"
+```
+
+### Results
+
+```text
+transformers True
+pandas True
+model_class GPT2LMHeadModel
+params 4080
+loss_finite True
+logits_shape (2, 8, 32)
+pretrained_loaded False
+```
+
+### Notes
+
+- HuggingFace emitted a harmless loss-type warning and used its default causal language modeling loss.
+- The model was created with `GPT2LMHeadModel(config)`, so weights were randomly initialized from the provided config.
+
+## 2026-05-26: Phase 1 - Tiny Dataset Smoke Test
+
+### Scope
+
+- Checked for local MIDI files under `data/` and `docs/`.
+- No local MIDI files were found.
+- Created three tiny synthetic smoke-test MIDI files under `data/samples/smoke_test/`.
+- Implemented the smallest end-to-end smoke-test path:
+  - MIDI discovery/creation.
+  - MidiTok REMI tokenization.
+  - train/validation token windows.
+  - tiny trigram Markov baseline.
+  - tiny GPT-2-style random model one-step training smoke test.
+  - token sampling.
+  - MIDI decoding.
+  - output MIDI parse and nonzero-note validation.
+- Did not download MAESTRO or any external dataset.
+- Did not implement full data loading, full training, final generation, evaluation, or notebook construction.
+
+### Commands Run
+
+```powershell
+Get-ChildItem -Path data,docs -Recurse -File -Include *.mid,*.midi | Select-Object FullName,Length
+conda run -n cse253 python scripts\run_smoke_test.py
+```
+
+### Files Created
+
+- `src/data.py`
+- `src/tokenizers.py`
+- `src/markov.py`
+- `scripts/run_smoke_test.py`
+- `data/samples/smoke_test/smoke_ascending.mid`
+- `data/samples/smoke_test/smoke_arpeggio.mid`
+- `data/samples/smoke_test/smoke_minor.mid`
+- `outputs/smoke_test/remi_roundtrip_v4.mid`
+- `outputs/smoke_test/smoke_unconditioned.mid`
+- `outputs/smoke_test/smoke_conditioned.mid`
+- `outputs/smoke_test/summary.json`
+
+### Results
+
+```text
+midi_source: synthetic_smoke_test
+tokenizer_mode: remi
+tokenizer_detail: remi_num_velocities_4
+vocab_size: 256
+sequence_lengths: [33, 33, 33]
+window_count: 9
+train_window_count: 8
+valid_window_count: 1
+markov_order: 3
+markov_valid_perplexity: 7.5516225432474835
+gpt_model_class: GPT2LMHeadModel
+gpt_parameter_count: 21472
+gpt_block_size: 16
+gpt_loss_before: 5.594419956207275
+gpt_loss_after: 5.466349124908447
+gpt_loss_is_finite: True
+gpt_pretrained_loaded: False
+unconditioned_midi: outputs/smoke_test/smoke_unconditioned.mid
+conditioned_midi: outputs/smoke_test/smoke_conditioned.mid
+unconditioned_note_count: 15
+conditioned_note_count: 15
+```
+
+### Notes
+
+- MidiTok emitted a warning that `vocab_size` equaled the number of base tokens, so tokenizer training was skipped. This did not block REMI tokenization, decoding, or the smoke test.
+- HuggingFace emitted the same harmless loss-type warning and used its default causal language modeling loss.
+- REMI succeeded, so the fallback tokenizer was implemented but not used in this smoke-test run.
+
+### Verification
+
+- `conda run -n cse253 python scripts\run_smoke_test.py` exited successfully.
+- Generated smoke-test MIDI outputs parse successfully and contain nonzero notes.
+- Final verification reran the smoke test successfully after files existed locally; the rerun reported `midi_source: local_existing` because the synthetic smoke-test files had already been created.
+- `conda run -n cse253 python -m compileall src scripts` hit Windows/OneDrive permission errors while writing `__pycache__` files, so syntax was verified without writing bytecode via:
+
+```powershell
+conda run -n cse253 python -c "import ast, pathlib; files=list(pathlib.Path('src').glob('*.py'))+list(pathlib.Path('scripts').glob('*.py')); [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('syntax_ok', len(files))"
+```
+
+Result:
+
+```text
+syntax_ok 5
+```
+- Final environment check through `scripts/check_env.py` now reports `transformers: True` and `pandas: True`.
+
+### Current Risks
+
+- The synthetic MIDI files are only smoke-test data and must not be presented as the final dataset.
+- REMI training was skipped for the tiny synthetic set because the requested vocab size was not larger than the base vocabulary. This is acceptable for Phase 1 but should be revisited for a real dataset.
+- The GPT-2-style model only completed a tiny random-initialized smoke test, not real training.
+- `compileall` may fail in this OneDrive-backed workspace when trying to write `__pycache__`; use `ast.parse` or set a separate cache location if bytecode compilation checks are needed.
+
+### Next Step
+
+- Proceed to Phase 2/3 planning for real tokenizer and baseline implementation, or begin a slightly larger local/Nottingham smoke dataset before MAESTRO.

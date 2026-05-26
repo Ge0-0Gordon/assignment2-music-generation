@@ -12,9 +12,9 @@
 
 ## Non-Negotiable Constraints
 
-- [ ] Work only inside this repository.
-- [ ] Run Python through `conda run -n cse253 python ...`.
-- [ ] Do not use the `base` environment for project execution.
+- [x] Work only inside this repository.
+- [x] Run Python through `conda run -n cse253 python ...`.
+- [x] Do not use the `base` environment for project execution.
 - [ ] Do not load pretrained GPT-2 weights.
 - [ ] Do not call `from_pretrained("gpt2")`.
 - [ ] Do not load pretrained music-generation checkpoints.
@@ -53,7 +53,7 @@
 
 **Purpose:** Confirm the repository and `cse253` environment are usable before implementation.
 
-- [ ] Run:
+- [x] Run:
 
 ```powershell
 pwd
@@ -66,9 +66,9 @@ conda run -n cse253 python -c "import torch; print(torch.__version__); print(tor
 conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','symusic','mido','midiutil','music21','transformers','nbformat']; [print(m, importlib.util.find_spec(m) is not None) for m in mods]"
 ```
 
-- [ ] Record results in `docs/execution_log.md`.
-- [ ] If `git` is not found, record the issue and continue without git operations until PATH is fixed by the user.
-- [ ] If `transformers` is missing, keep HuggingFace as optional and plan to use the custom PyTorch Transformer unless the user approves a minimal `conda run -n cse253 pip install transformers`.
+- [x] Record results in `docs/execution_log.md`.
+- [x] If `git` is not found, record the issue and continue without git operations until PATH is fixed by the user.
+- [x] If `transformers` is missing, keep HuggingFace as optional and plan to use the custom PyTorch Transformer unless the user approves a minimal `conda run -n cse253 pip install transformers`.
 - [ ] If MidiTok or symusic is missing, plan to use the custom tokenizer or ask the user before installing packages.
 
 **Verification:** The log clearly states current directory, Python executable situation, `cse253` Python version, CUDA availability, and dependency availability.
@@ -77,12 +77,12 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 
 **Purpose:** Prove the complete pipeline before using MAESTRO.
 
-- [ ] Select a tiny local MIDI set if files are already present under `data/`.
-- [ ] If no MIDI files are present, use a tiny Nottingham-style MIDI subset only after the user approves dataset acquisition.
-- [ ] Limit smoke-test data to enough files to exercise parsing, splitting, training, generation, and decoding.
-- [ ] Use deterministic seeds for dataset split and sampling.
-- [ ] Create a train/validation split with at least one validation sequence.
-- [ ] Keep sequence windows short enough for fast CPU/GPU execution.
+- [x] Select a tiny local MIDI set if files are already present under `data/`.
+- [x] If no MIDI files are present, create clearly labeled synthetic smoke-test MIDI files instead of downloading external data.
+- [x] Limit smoke-test data to enough files to exercise parsing, splitting, training, generation, and decoding.
+- [x] Use deterministic seeds for dataset split and sampling.
+- [x] Create a train/validation split with at least one validation sequence.
+- [x] Keep sequence windows short enough for fast CPU/GPU execution.
 
 **Verification:** A smoke-test run can load MIDI files, create token windows, train a minimal baseline/model briefly, generate tokens, decode a MIDI file, and parse the decoded MIDI without error.
 

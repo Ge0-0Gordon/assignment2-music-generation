@@ -1,5 +1,7 @@
 data/raw/
 data/processed/
+data/samples/smoke_test/
+outputs/
 outputs/checkpoints/
 outputs/logs/
 outputs/tmp/
