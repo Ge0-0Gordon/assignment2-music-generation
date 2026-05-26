@@ -646,3 +646,83 @@ Paths are CLI-configurable for dataset/input/output/metrics directories.
 Downloaded datasets and generated outputs are ignored by git.
 The current training runs are bounded and proof-of-pipeline, not final model-quality runs.
 ```
+
+## Candidate Analysis, Evaluation Artifacts, and Draft Notebook
+
+Date: 2026-05-26
+
+Purpose: finish the interrupted draft-report pass without rerunning long training jobs or creating final submission files.
+
+Commands:
+
+```powershell
+conda run -n cse253 python -c "import ast, pathlib; files=list(pathlib.Path('src').glob('*.py'))+list(pathlib.Path('scripts').glob('*.py')); [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('syntax_ok', len(files))"
+conda run -n cse253 python scripts\analyze_candidates.py --datasets nottingham maestro --output-dir outputs\evaluation
+conda run -n cse253 python scripts\build_workbook.py
+conda run -n cse253 python -c "import nbformat; nb=nbformat.read('notebooks/workbook.ipynb', as_version=4); print('notebook_cells', len(nb.cells)); print('markdown_cells', sum(1 for c in nb.cells if c.cell_type=='markdown'))"
+Select-String -Path src\*.py,scripts\*.py,notebooks\workbook.ipynb -Pattern 'from_pretrained|GPT2Tokenizer|AutoTokenizer'
+conda run -n cse253 python -c "from pathlib import Path; from src.evaluate import analyze_candidate; paths=sorted(Path('outputs/candidates/selected').rglob('*.mid')); [print(p.as_posix(), analyze_candidate(p).valid, analyze_candidate(p).note_count) for p in paths]"
+```
+
+Initial notebook build issue:
+
+```text
+pandas.to_markdown required optional package tabulate, which is not installed in cse253.
+No package was installed. scripts/build_workbook.py was changed to render simple Markdown tables directly.
+```
+
+Evaluation outputs:
+
+```text
+outputs/evaluation/tables/dataset_summary.csv
+outputs/evaluation/tables/model_metrics.csv
+outputs/evaluation/tables/candidate_ranking.csv
+outputs/evaluation/tables/selected_candidates.csv
+outputs/evaluation/tables/figures.csv
+outputs/evaluation/analysis_summary.json
+outputs/evaluation/figures/nottingham_token_lengths.png
+outputs/evaluation/figures/nottingham_pitch_class_histogram.png
+outputs/evaluation/figures/maestro_token_lengths.png
+outputs/evaluation/figures/maestro_pitch_class_histogram.png
+```
+
+Selected draft MIDI candidates:
+
+```text
+outputs/candidates/selected/nottingham/unconditioned_markov.mid
+outputs/candidates/selected/nottingham/conditioned_markov.mid
+outputs/candidates/selected/maestro/unconditioned_transformer.mid
+outputs/candidates/selected/maestro/conditioned_markov.mid
+```
+
+Candidate ranking summary:
+
+```text
+Nottingham conditioned best: markov_conditioned.mid, valid, 130 notes, 40.5 seconds, score 0.9137
+Nottingham unconditioned best: markov_unconditioned.mid, valid, 130 notes, 50.75 seconds, score 0.9297
+MAESTRO unconditioned selected: transformer_unconditioned.mid, valid, 92 notes, 6.875 seconds, score -0.3498
+MAESTRO conditioned best: markov_conditioned.mid, valid, 87 notes, 11.875 seconds, score 0.7140
+```
+
+Notebook:
+
+```text
+notebooks/workbook.ipynb created as a 15-cell draft report.
+The notebook includes task definitions, dataset/preprocessing, tokenization, Markov baseline, scratch GPT-2-style Transformer, both generation tasks, evaluation tables, figures, related work notes, limitations, and next steps.
+It is not exported to HTML and no submission files were created.
+```
+
+Verification:
+
+```text
+syntax_ok: 11 Python files
+candidate analysis rerun: succeeded and regenerated the same selected-candidate records
+notebook_cells: 15
+markdown_cells: 15
+from_pretrained/GPT2Tokenizer/AutoTokenizer scan: no matches
+selected MIDI validation:
+  outputs/candidates/selected/maestro/conditioned_markov.mid valid=True notes=87
+  outputs/candidates/selected/maestro/unconditioned_transformer.mid valid=True notes=92
+  outputs/candidates/selected/nottingham/conditioned_markov.mid valid=True notes=130
+  outputs/candidates/selected/nottingham/unconditioned_markov.mid valid=True notes=130
+```

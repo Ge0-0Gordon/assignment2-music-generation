@@ -43,6 +43,8 @@
 - `scripts/check_env.py`: environment and dependency sanity report.
 - `scripts/run_smoke_test.py`: tiny end-to-end pipeline runner.
 - `scripts/train_main.py`: main training entry point.
+- `scripts/analyze_candidates.py`: candidate metric/ranking and evaluation artifact builder.
+- `scripts/build_workbook.py`: draft notebook builder from current evaluation artifacts.
 - `scripts/generate_submission.py`: final MIDI generation entry point.
 - `scripts/export_notebook.py`: notebook-to-HTML export helper if needed.
 - `notebooks/workbook.ipynb`: final documented notebook for peer grading.
@@ -112,6 +114,10 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 - [x] Run manifest creation, REMI tokenization, train/validation split, Markov baseline, short scratch GPT-2-style Transformer training, candidate generation, and MIDI validity checks on MAESTRO.
 - [x] Create basic evaluation outputs: dataset summaries, manifests, pitch-class histograms, token-length distributions, candidate MIDI files, and summary JSON files.
 - [x] Stop before final notebook, final submission files, commits, pushes, or unbounded training.
+- [x] Analyze and rank current Nottingham and MAESTRO candidate MIDI files.
+- [x] Save selected draft candidates under `outputs/candidates/selected/`.
+- [x] Create draft evaluation tables and figures under `outputs/evaluation/`.
+- [x] Create a draft `notebooks/workbook.ipynb` report from available results.
 
 ## Phase 2: Tokenization
 
@@ -225,10 +231,10 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 
 **Purpose:** Satisfy the rubric with evidence beyond “it generated something.”
 
-- [ ] Dataset table: number of MIDI files, train/validation split, token count, window count, vocabulary size.
-- [ ] Model table: Markov order, Transformer/LSTM hyperparameters, train loss, validation loss, validation perplexity.
-- [ ] Generation validity table: attempts, valid decodes, selected output duration, note count.
-- [ ] Pitch-class histogram: train vs generated.
+- [x] Dataset table: number of MIDI files, train/validation split, token count, window count, vocabulary size.
+- [x] Model table: Markov order, Transformer/LSTM hyperparameters, train loss, validation loss, validation perplexity.
+- [x] Generation validity table: attempts, valid decodes, selected output duration, note count.
+- [x] Pitch-class histogram: train vs generated.
 - [ ] Duration/rhythm histogram: train vs generated.
 - [ ] Token diversity metrics: unique tokens, unique n-grams, repetition rate.
 - [ ] Conditioned continuation analysis: prefix length, generated length, boundary behavior, qualitative listening notes.
@@ -240,16 +246,16 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 
 **Purpose:** Produce a clean peer-gradable workbook that does not require execution.
 
-- [ ] Build `notebooks/workbook.ipynb` as a narrative report.
-- [ ] Include the two task definitions near the top.
-- [ ] Include dataset source and preprocessing decisions.
+- [x] Build `notebooks/workbook.ipynb` as a narrative report.
+- [x] Include the two task definitions near the top.
+- [x] Include dataset source and preprocessing decisions.
 - [ ] Include tokenization examples.
-- [ ] Include Markov baseline implementation summary and results.
-- [ ] Include Transformer architecture summary and training results.
+- [x] Include Markov baseline implementation summary and results.
+- [x] Include Transformer architecture summary and training results.
 - [ ] Include fallback decisions if any fallback is used.
-- [ ] Include Task 1 generated MIDI discussion.
-- [ ] Include Task 2 prefix and continuation discussion.
-- [ ] Include related work: Module 3, REMI/Pop Music Transformer, Music Transformer, Performance RNN, Markov/n-gram models, MAESTRO/Nottingham.
+- [x] Include Task 1 generated MIDI discussion.
+- [x] Include Task 2 prefix and continuation discussion.
+- [x] Include related work: Module 3, REMI/Pop Music Transformer, Music Transformer, Performance RNN, Markov/n-gram models, MAESTRO/Nottingham.
 - [ ] Include final submission file list.
 
 **Verification:** A reader can understand the full pipeline and results without running the notebook.
