@@ -1,0 +1,15 @@
+data/raw/
+data/processed/
+outputs/checkpoints/
+outputs/logs/
+outputs/tmp/
+outputs/cache/
+__pycache__/
+.ipynb_checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.mp4
+*.wav
+*.flac
+*.ogg
