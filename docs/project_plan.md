@@ -86,6 +86,33 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 
 **Verification:** A smoke-test run can load MIDI files, create token windows, train a minimal baseline/model briefly, generate tokens, decode a MIDI file, and parse the decoded MIDI without error.
 
+### Phase 1 Extension: Small Real MIDI Dataset Smoke Run
+
+**Purpose:** Move beyond synthetic smoke data with a tiny real MIDI-only subset before MAESTRO.
+
+- [x] Confirm the repository is clean before starting the real-data smoke run.
+- [x] Check for usable non-synthetic MIDI files under `data/` and `docs/`.
+- [x] If no usable local real MIDI exists, use a tiny MIDI-only Nottingham subset rather than MAESTRO or audio data.
+- [x] Store the small real MIDI subset under ignored data paths.
+- [x] Run the existing REMI tokenizer path on the real MIDI subset.
+- [x] Run the Markov/n-gram baseline on real token windows.
+- [x] Run a tiny GPT-2-style random-initialized Transformer smoke train step on real token windows.
+- [x] Generate candidate MIDI outputs under ignored output paths.
+- [x] Validate generated MIDI files are parseable and contain nonzero notes.
+- [x] Record dataset source, size, metrics, generated output validity, and risks in `docs/execution_log.md`.
+
+### Phase 1 Extension: Expanded Nottingham and Small MAESTRO Runs
+
+**Purpose:** Build the first credible working symbolic MIDI pipeline while staying short of final notebook/submission work.
+
+- [x] Prepare a modest 150-file Nottingham MIDI-only subset under ignored raw data paths.
+- [x] Run manifest creation, REMI tokenization, train/validation split, Markov baseline, short scratch GPT-2-style Transformer training, candidate generation, and MIDI validity checks on Nottingham.
+- [x] Run the Nottingham self-review gate before attempting MAESTRO.
+- [x] Prepare a bounded MAESTRO v3.0.0 MIDI-only subset from the official MIDI archive.
+- [x] Run manifest creation, REMI tokenization, train/validation split, Markov baseline, short scratch GPT-2-style Transformer training, candidate generation, and MIDI validity checks on MAESTRO.
+- [x] Create basic evaluation outputs: dataset summaries, manifests, pitch-class histograms, token-length distributions, candidate MIDI files, and summary JSON files.
+- [x] Stop before final notebook, final submission files, commits, pushes, or unbounded training.
+
 ## Phase 2: Tokenization
 
 **Primary: MidiTok REMI**

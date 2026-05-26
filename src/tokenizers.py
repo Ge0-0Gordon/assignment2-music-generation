@@ -35,7 +35,8 @@ class REMITokenizerSmoke:
         self.tokenizer = REMI(config)
 
     def fit(self, midi_files: list[Path]) -> None:
-        self.tokenizer.train(vocab_size=256, files_paths=[str(path) for path in midi_files])
+        vocab_size = max(512, len(self.tokenizer) + 64)
+        self.tokenizer.train(vocab_size=vocab_size, files_paths=[str(path) for path in midi_files])
 
     @property
     def vocab_size(self) -> int:

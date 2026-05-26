@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from argparse import ArgumentParser
 from pathlib import Path
 
 import torch
@@ -90,13 +91,54 @@ def _run_tiny_gpt_smoke(train_windows: list[list[int]], vocab_size: int) -> dict
     }
 
 
+def parse_args() -> object:
+    parser = ArgumentParser(description="Run a minimal symbolic MIDI smoke test.")
+    parser.add_argument(
+        "--input-dir",
+        action="append",
+        default=[],
+        help="MIDI directory to scan. Can be passed more than once. Defaults to data and docs.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(ROOT / "outputs" / "smoke_test"),
+        help="Directory for smoke-test outputs.",
+    )
+    parser.add_argument(
+        "--max-files",
+        type=int,
+        default=12,
+        help="Maximum number of MIDI files to use.",
+    )
+    parser.add_argument(
+        "--allow-synthetic",
+        action="store_true",
+        help="Create synthetic MIDI files if no input MIDI files are found.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
-    output_dir = ROOT / "outputs" / "smoke_test"
+    args = parse_args()
+    output_dir = Path(args.output_dir)
+    if not output_dir.is_absolute():
+        output_dir = ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    midi_files = discover_midi_files([ROOT / "data", ROOT / "docs"])
+    roots = [Path(path) for path in args.input_dir] if args.input_dir else [ROOT / "data", ROOT / "docs"]
+    roots = [path if path.is_absolute() else ROOT / path for path in roots]
+    midi_files = discover_midi_files(roots)
+    midi_files = [
+        path
+        for path in midi_files
+        if "data\\samples\\smoke_test" not in str(path.relative_to(ROOT))
+    ][: args.max_files]
     used_synthetic = False
     if not midi_files:
+        if not args.allow_synthetic:
+            raise FileNotFoundError(
+                "No MIDI files found. Pass --allow-synthetic for synthetic smoke data."
+            )
         midi_files = create_synthetic_smoke_midis(ROOT / "data" / "samples" / "smoke_test")
         used_synthetic = True
 

@@ -90,3 +90,29 @@ def split_train_valid(windows: list[list[int]]) -> tuple[list[list[int]], list[l
     if len(windows) < 2:
         return windows, windows
     return windows[:-1], windows[-1:]
+
+
+def split_files(
+    midi_files: list[Path],
+    valid_fraction: float = 0.2,
+) -> tuple[list[Path], list[Path]]:
+    """Deterministically split files into train/validation groups."""
+    if not midi_files:
+        return [], []
+    if len(midi_files) == 1:
+        return midi_files, midi_files
+    valid_count = max(1, int(round(len(midi_files) * valid_fraction)))
+    valid_count = min(valid_count, len(midi_files) - 1)
+    return midi_files[:-valid_count], midi_files[-valid_count:]
+
+
+def pitch_class_histogram(paths: Iterable[Path]) -> list[int]:
+    """Count note-on pitch classes across MIDI files."""
+    counts = [0] * 12
+    for path in paths:
+        midi = mido.MidiFile(path)
+        for track in midi.tracks:
+            for message in track:
+                if message.type == "note_on" and getattr(message, "velocity", 0) > 0:
+                    counts[int(message.note) % 12] += 1
+    return counts
