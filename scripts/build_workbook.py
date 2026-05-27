@@ -31,8 +31,8 @@ def markdown_table(df: pd.DataFrame, max_rows: int = 12) -> str:
         "| " + " | ".join(columns) + " |",
         "| " + " | ".join(["---"] * len(columns)) + " |",
     ]
-    for row in shown.astype(str).itertuples(index=False, name=None):
-        cleaned = [cell.replace("\n", " ").replace("|", "\\|") for cell in row]
+    for row in shown.itertuples(index=False, name=None):
+        cleaned = [str(cell).replace("\n", " ").replace("|", "\\|") for cell in row]
         lines.append("| " + " | ".join(cleaned) + " |")
     return "\n".join(lines)
 
@@ -88,9 +88,10 @@ def main() -> None:
         ),
         nbf.v4.new_markdown_cell(
             "## 2. Dataset and Preprocessing\n\n"
-            "The current draft includes a Nottingham MIDI subset and a small "
-            "MAESTRO MIDI-only subset. Audio was not downloaded or used. Files are "
-            "split into train/validation partitions, tokenized, and converted into "
+            "The current draft uses the final-scale Nottingham MIDI run as the "
+            "main route and includes a bounded MAESTRO MIDI-only experiment as an "
+            "optional comparison. Audio was not used. Files are split into "
+            "train/validation partitions, tokenized, and converted into "
             "fixed-length next-token windows.\n\n"
             "### Dataset Summary\n\n" + markdown_table(dataset)
         ),
@@ -115,26 +116,36 @@ def main() -> None:
             "## 5. GPT2-Style Causal Transformer Trained From Scratch\n\n"
             "The neural model uses `GPT2Config` and `GPT2LMHeadModel(config)` as a "
             "decoder-only Transformer architecture. The model is randomly "
-            "initialized and trained on MIDI token windows. The current run is "
-            "bounded and intentionally small, so the results should be interpreted "
-            "as a credible first draft rather than final-quality music."
+            "initialized and trained on MIDI token windows. The Nottingham "
+            "final-scale run used 500 MIDI files, a 450/50 train/validation split, "
+            "`block_size=256`, `n_embd=256`, `n_layer=4`, `n_head=4`, dropout "
+            "`0.1`, and 3,000 training steps. Its best checkpoint reached "
+            "validation loss 2.9286 and validation perplexity 18.7009."
         ),
         nbf.v4.new_markdown_cell(
-            "## 6. Task 1: Symbolic Unconditioned Generation\n\n"
+            "## 6. Optional MAESTRO MIDI-Only Experiment\n\n"
+            "A bounded MAESTRO MIDI-only comparison was run from local data. The "
+            "subset used 120 short MIDI files selected from local metadata, with "
+            "audio excluded. This run is useful context, but Nottingham remains "
+            "the recommended final route because its final-scale Transformer has "
+            "much stronger validation perplexity and longer selected candidates."
+        ),
+        nbf.v4.new_markdown_cell(
+            "## 7. Task 1: Symbolic Unconditioned Generation\n\n"
             "For unconditioned generation, the sampler starts from a short seed and "
             "generates new MIDI tokens. Candidate files are decoded, parsed, and "
             "ranked by validity, note count, duration, pitch range, polyphony, and "
             "repetition heuristics."
         ),
         nbf.v4.new_markdown_cell(
-            "## 7. Task 2: Prefix-Conditioned Continuation\n\n"
+            "## 8. Task 2: Prefix-Conditioned Continuation\n\n"
             "For conditioned continuation, a validation MIDI prefix is used as the "
             "prompt. The model samples additional tokens after that prefix, and "
             "the resulting sequence is decoded to MIDI. This tests whether the "
             "same next-token model can generate in context."
         ),
         nbf.v4.new_markdown_cell(
-            "## 8. Evaluation\n\n"
+            "## 9. Evaluation\n\n"
             "Candidate MIDI files are checked for parseability and nonzero notes. "
             "The ranking table below is a rough quantitative screen, not a "
             "substitute for listening.\n\n"
@@ -145,24 +156,24 @@ def main() -> None:
         ),
         nbf.v4.new_markdown_cell(
             "### Token Length Distributions\n\n"
-            + figure_md("nottingham_token_lengths.png", "Nottingham token length distribution")
+            + figure_md("nottingham_final_token_lengths.png", "Nottingham final token length distribution")
             + "\n\n"
-            + figure_md("maestro_token_lengths.png", "MAESTRO token length distribution")
+            + figure_md("maestro_final_token_lengths.png", "MAESTRO final token length distribution")
         ),
         nbf.v4.new_markdown_cell(
             "### Pitch-Class Histograms\n\n"
             + figure_md(
-                "nottingham_pitch_class_histogram.png",
-                "Nottingham train vs selected generated pitch-class histogram",
+                "nottingham_final_pitch_class_histogram.png",
+                "Nottingham final train vs selected generated pitch-class histogram",
             )
             + "\n\n"
             + figure_md(
-                "maestro_pitch_class_histogram.png",
-                "MAESTRO train vs selected generated pitch-class histogram",
+                "maestro_final_pitch_class_histogram.png",
+                "MAESTRO final train vs selected generated pitch-class histogram",
             )
         ),
         nbf.v4.new_markdown_cell(
-            "## 9. Related Work Notes\n\n"
+            "## 10. Related Work Notes\n\n"
             "This project is aligned with symbolic music generation methods from "
             "the course material, especially next-event prediction over symbolic "
             "music representations. The most relevant references for the final "
@@ -171,15 +182,15 @@ def main() -> None:
             "baselines, Nottingham, and MAESTRO."
         ),
         nbf.v4.new_markdown_cell(
-            "## 10. Discussion, Limitations, and Future Work\n\n"
+            "## 11. Discussion, Limitations, and Future Work\n\n"
             "The pipeline now produces valid MIDI candidates for both tasks. The "
-            "main limitations are musical quality, short bounded training, and "
-            "heuristic candidate selection. The next pass should listen to the "
-            "selected files, choose the final dataset route, train the selected "
-            "Transformer longer if time allows, and add qualitative observations."
+            "main limitations are musical quality, heuristic candidate selection, "
+            "and the fact that validation perplexity does not directly measure "
+            "whether a melody is aesthetically satisfying. The next pass should "
+            "listen to the selected files and add qualitative observations."
         ),
         nbf.v4.new_markdown_cell(
-            "## 11. Current Artifacts and Next Steps\n\n"
+            "## 12. Current Artifacts and Remaining Submission Steps\n\n"
             "Current generated artifacts live under `outputs/`, including metrics "
             "tables, figures, and selected candidate MIDI files. These are draft "
             "artifacts only. Final submission files have not been created yet.\n\n"
