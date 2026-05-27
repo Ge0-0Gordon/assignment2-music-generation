@@ -573,6 +573,41 @@ def token_type_summary(tokenizer: object, ids: list[int], decoded_note_count: in
     return counts
 
 
+def select_piece_start_prefix(
+    sequence_by_file: dict[Path, list[int]],
+    train_files: list[Path],
+    valid_files: list[Path],
+    primer_source: str,
+    requested_prefix_tokens: int,
+    primer_index: int | None,
+) -> tuple[list[int], dict[str, object]]:
+    source_files = train_files if primer_source == "train" else valid_files
+    candidates = [(path, sequence_by_file[path]) for path in source_files if sequence_by_file.get(path)]
+    if not candidates:
+        raise ValueError(f"No tokenized {primer_source} files available for piece_start_seeded primer")
+    if primer_index is None:
+        selected_index = random.randrange(len(candidates))
+        selection_method = "random_seeded"
+    else:
+        if primer_index < 0 or primer_index >= len(candidates):
+            raise ValueError(
+                f"--primer-index {primer_index} is outside {primer_source} primer range 0..{len(candidates) - 1}"
+            )
+        selected_index = primer_index
+        selection_method = "primer_index"
+    primer_file, sequence = candidates[selected_index]
+    prefix_count = max(1, min(requested_prefix_tokens, len(sequence)))
+    return sequence[:prefix_count], {
+        "primer_source": primer_source,
+        "primer_index": selected_index,
+        "primer_selection_method": selection_method,
+        "primer_file": str(primer_file.relative_to(ROOT)) if primer_file.is_relative_to(ROOT) else str(primer_file),
+        "primer_sequence_tokens": len(sequence),
+        "requested_prefix_tokens": requested_prefix_tokens,
+        "actual_prefix_tokens": prefix_count,
+    }
+
+
 def parse_number_list(raw: str, cast: object) -> list[object]:
     return [cast(part.strip()) for part in raw.split(",") if part.strip()]
 
@@ -634,6 +669,7 @@ def generate_transformer_candidates(
                         "candidate_index": index,
                         "generation_mode": unconditioned_mode if task_name == "unconditioned" else "conditioned_prefix",
                         "prefix_token_count": len(seed_prefix),
+                        "continuation_token_count": max(0, len(selected_ids) - len(seed_prefix)),
                         "decode_retry_attempts": max(1, decode_retry_attempts),
                         "error": error,
                     }
@@ -756,8 +792,14 @@ def parse_args() -> object:
     parser.add_argument("--decode-retry-attempts", type=int, default=1)
     parser.add_argument("--temperatures", default=str(DEFAULT_TEMPERATURE))
     parser.add_argument("--top-ks", default=str(DEFAULT_TOP_K))
-    parser.add_argument("--unconditioned-mode", choices=["pure_bos", "structural_seeded"], default="pure_bos")
+    parser.add_argument(
+        "--unconditioned-mode",
+        choices=["pure_bos", "structural_seeded", "piece_start_seeded"],
+        default="pure_bos",
+    )
     parser.add_argument("--unconditioned-prefix-tokens", type=int, default=32)
+    parser.add_argument("--primer-source", choices=["train", "valid"], default="valid")
+    parser.add_argument("--primer-index", type=int, default=None)
     parser.add_argument("--seed", type=int, default=SEED)
     return parser.parse_args()
 
@@ -909,10 +951,20 @@ def main() -> None:
 
     generation_block_size = int(transformer_metrics["block_size"])
     prefix = valid_windows[0][: min(generation_block_size // 2, len(valid_windows[0]))]
+    unconditioned_primer: dict[str, object] | None = None
     if args.unconditioned_mode == "structural_seeded":
         unconditioned_prefix = valid_windows[0][
             : max(1, min(args.unconditioned_prefix_tokens, generation_block_size // 2, len(valid_windows[0])))
         ]
+    elif args.unconditioned_mode == "piece_start_seeded":
+        unconditioned_prefix, unconditioned_primer = select_piece_start_prefix(
+            sequence_by_file=sequence_by_file,
+            train_files=train_files,
+            valid_files=valid_files,
+            primer_source=args.primer_source,
+            requested_prefix_tokens=args.unconditioned_prefix_tokens,
+            primer_index=args.primer_index,
+        )
     else:
         unconditioned_prefix = [train_windows[0][0]]
     markov_uncond = markov.sample(args.generate_tokens, prefix=unconditioned_prefix)
@@ -927,7 +979,16 @@ def main() -> None:
     }.items():
         path = output_dir / f"{name}.mid"
         valid, notes, error, selected_ids = decode_with_retries(tokenizer, candidates, path)
-        outputs[name] = {"path": str(path.relative_to(ROOT)), "valid": valid, "note_count": notes, "error": error}
+        seed_length = len(unconditioned_prefix) if name == "markov_unconditioned" else len(prefix)
+        outputs[name] = {
+            "path": str(path.relative_to(ROOT)),
+            "valid": valid,
+            "note_count": notes,
+            "generation_mode": args.unconditioned_mode if name == "markov_unconditioned" else "conditioned_prefix",
+            "prefix_token_count": seed_length,
+            "continuation_token_count": max(0, len(selected_ids) - seed_length),
+            "error": error,
+        }
         outputs[name].update(token_type_summary(tokenizer, selected_ids, notes))
     outputs.update(
         generate_transformer_candidates(
@@ -992,6 +1053,11 @@ def main() -> None:
             "decode_retry_attempts": args.decode_retry_attempts,
             "unconditioned_mode": args.unconditioned_mode,
             "unconditioned_prefix_tokens": len(unconditioned_prefix),
+            "requested_unconditioned_prefix_tokens": args.unconditioned_prefix_tokens,
+            "unconditioned_continuation_tokens": max(0, args.generate_tokens - len(unconditioned_prefix)),
+            "primer_source": args.primer_source,
+            "primer_index": args.primer_index,
+            "unconditioned_primer": unconditioned_primer,
             "transformer_candidate_count": len([key for key in outputs if key.startswith("transformer_")]),
         },
         "metrics": {

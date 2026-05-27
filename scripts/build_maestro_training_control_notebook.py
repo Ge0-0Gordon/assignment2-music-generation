@@ -116,8 +116,10 @@ BASE_CONFIG = {
     "decode_retry_attempts": 1,
     "temperatures": [0.8, 0.9, 1.0],
     "top_ks": [50, 100],
-    "generation_mode": "structural_seeded",  # "pure_bos" or "structural_seeded"
+    "generation_mode": "structural_seeded",  # "pure_bos", "structural_seeded", or "piece_start_seeded"
     "unconditioned_prefix_tokens": 32,
+    "primer_source": "valid",
+    "primer_index": None,
     "run_id": "run_050k_seeded",
     "seed": 253,
     "resume_checkpoint": "outputs/checkpoints/maestro_full/best_transformer.pt",
@@ -171,6 +173,8 @@ EXPERIMENTS = {
         "batch_size": 16,
         "generation_mode": "structural_seeded",
         "unconditioned_prefix_tokens": 32,
+        "primer_source": "valid",
+        "primer_index": None,
         "candidate_count": 20,
         "generate_tokens": 1024,
         "min_notes": 50,
@@ -194,8 +198,8 @@ def select_experiment(name):
     return CONFIG
 
 
-# Recommended maestro_clean defaults: block_size=256, stride=256, n_embd=256,
-# n_layer=4, n_head=4, batch_size=16, lr=0.0003, max_steps=10000,
+# Recommended maestro_clean defaults: block_size=256 or 1024 for separate ctx experiments,
+# stride=256, n_embd=256, n_layer=4, n_head=4, batch_size=16, lr=0.0003, max_steps=10000,
 # resume_checkpoint="" for from-scratch clean training.
 select_experiment(EXPERIMENT)
 CONFIG
@@ -349,8 +353,11 @@ def train_command(config):
         "--top-ks", list_arg(config["top_ks"]),
         "--unconditioned-mode", config["generation_mode"],
         "--unconditioned-prefix-tokens", str(config["unconditioned_prefix_tokens"]),
+        "--primer-source", config["primer_source"],
         "--seed", str(config["seed"]),
     ]
+    if config.get("primer_index") is not None:
+        cmd.extend(["--primer-index", str(config["primer_index"])])
     if config.get("resume_checkpoint"):
         cmd.extend(["--resume-checkpoint", config["resume_checkpoint"]])
     return add_optional_quality_args(cmd, config)
@@ -448,8 +455,11 @@ def generate_command(config):
         "--top-ks", list_arg(config["top_ks"]),
         "--unconditioned-mode", config["generation_mode"],
         "--unconditioned-prefix-tokens", str(config["unconditioned_prefix_tokens"]),
+        "--primer-source", config["primer_source"],
         "--seed", str(config["seed"]),
     ]
+    if config.get("primer_index") is not None:
+        cmd.extend(["--primer-index", str(config["primer_index"])])
     return add_optional_quality_args(cmd, config)
 
 
@@ -497,8 +507,9 @@ if ranking_path.exists():
     ranking_df = pd.read_csv(ranking_path)
     display(ranking_df.sort_values("score", ascending=False).head(20))
     if "usable" in ranking_df and "reject_reason" in ranking_df:
+        summary_cols = ["run", "task_type"] if "run" in ranking_df else ["task_type"]
         display(
-            ranking_df.groupby(["task_type", "usable"], dropna=False)
+            ranking_df.groupby(summary_cols + ["usable"], dropna=False)
             .size()
             .reset_index(name="count")
         )
@@ -515,6 +526,9 @@ else:
 if selected_path.exists():
     selected_df = pd.read_csv(selected_path)
     display(selected_df[["run", "task_type", "selected_path", "note_count", "duration_seconds", "score"]])
+    print("Files to audition:")
+    for row in selected_df.itertuples(index=False):
+        print(getattr(row, "task_type"), PROJECT_ROOT / getattr(row, "selected_path"))
 else:
     print("No selected_candidates.csv yet.")
             """
@@ -598,6 +612,8 @@ def save_single_indexed_run(config, run_id, notes):
         "top_ks": config["top_ks"],
         "generation_mode": config["generation_mode"],
         "unconditioned_prefix_tokens": config["unconditioned_prefix_tokens"],
+        "primer_source": config["primer_source"],
+        "primer_index": config["primer_index"],
         "selection_rule": "highest score among usable candidates after hard reject filters",
     }
     (run_dir / "generation_config.json").write_text(json.dumps(generation_config, indent=2), encoding="utf-8")
@@ -621,8 +637,14 @@ selected_path = PROJECT_ROOT / CONFIG["evaluation_dir"] / "tables" / "selected_c
 if selected_path.exists():
     selected_df = pd.read_csv(selected_path)
     display(selected_df[["run", "task_type", "selected_path", "note_count", "duration_seconds", "notes_per_second", "pitch_range"]])
-    print("Open a MIDI from PowerShell with:")
-    print(f"Invoke-Item '{CONFIG['final_indexed_dir']}\\{CONFIG['run_id']}\\symbolic_conditioned.mid'")
+    print("Files to audition:")
+    for row in selected_df.itertuples(index=False):
+        midi_path = PROJECT_ROOT / getattr(row, "selected_path")
+        print(f"{getattr(row, 'run')} {getattr(row, 'task_type')}: {midi_path}")
+    run_dir = PROJECT_ROOT / CONFIG["final_indexed_dir"] / CONFIG["run_id"]
+    print("Current run helper commands:")
+    print(f"Invoke-Item '{run_dir}\\symbolic_unconditioned.mid'")
+    print(f"Invoke-Item '{run_dir}\\symbolic_conditioned.mid'")
 else:
     print("No selected candidates table yet.")
             """
