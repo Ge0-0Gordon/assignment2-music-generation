@@ -60,7 +60,10 @@ def select_candidates(
         task_rows = [
             row
             for row in metrics
-            if row["dataset"] == dataset and row["task_type"] == task and row["valid"]
+            if row["dataset"] == dataset
+            and row["task_type"] == task
+            and row["valid"]
+            and row.get("usable", False)
         ]
         if transformer_only:
             task_rows = [row for row in task_rows if row["model_type"] == "transformer"]
@@ -80,8 +83,45 @@ def copy_selected(selected: dict[str, dict[str, object]], dataset: str) -> list[
             source = ROOT / source
         target = selected_dir / f"{task}_{row['model_type']}.mid"
         shutil.copy2(source, target)
-        copied.append({"dataset": dataset, "task_type": task, "source": str(source.relative_to(ROOT)), "selected_path": str(target.relative_to(ROOT))})
+        copied.append(
+            {
+                "dataset": dataset,
+                "task_type": task,
+                "source": str(source.relative_to(ROOT)),
+                "selected_path": str(target.relative_to(ROOT)),
+                "score": row.get("score", ""),
+                "note_count": row.get("note_count", ""),
+                "duration_seconds": row.get("duration_seconds", ""),
+                "notes_per_second": row.get("notes_per_second", ""),
+                "reject_reason": "",
+            }
+        )
     return copied
+
+
+def missing_selection_rows(
+    dataset: str,
+    selected: dict[str, dict[str, object]],
+    tasks: tuple[str, ...] = ("unconditioned", "conditioned"),
+) -> list[dict[str, object]]:
+    rows = []
+    for task in tasks:
+        if task in selected:
+            continue
+        rows.append(
+            {
+                "dataset": dataset,
+                "task_type": task,
+                "source": "",
+                "selected_path": "",
+                "score": "",
+                "note_count": "",
+                "duration_seconds": "",
+                "notes_per_second": "",
+                "reject_reason": "No usable Transformer candidate found; need regeneration.",
+            }
+        )
+    return rows
 
 
 def plot_token_lengths(dataset: str, figures_dir: Path) -> str:
@@ -189,6 +229,7 @@ def main() -> None:
             candidate_rows.append(asdict(analyze_candidate(candidate_path)))
         selected = select_candidates(candidate_rows, dataset, transformer_only=args.transformer_only_selected)
         selected_rows.extend(copy_selected(selected, dataset))
+        selected_rows.extend(missing_selection_rows(dataset, selected))
         token_fig = plot_token_lengths(dataset, figures_dir)
         figure_rows.append({"dataset": dataset, "figure": token_fig, "kind": "token_length_distribution"})
         pitch_fig = plot_pitch_histogram(dataset, selected, figures_dir)
@@ -198,7 +239,21 @@ def main() -> None:
     write_csv(tables_dir / "dataset_summary.csv", dataset_rows, list(dataset_rows[0].keys()))
     write_csv(tables_dir / "model_metrics.csv", model_rows, list(model_rows[0].keys()))
     write_csv(tables_dir / "candidate_ranking.csv", candidate_rows, list(candidate_rows[0].keys()))
-    write_csv(tables_dir / "selected_candidates.csv", selected_rows, ["dataset", "task_type", "source", "selected_path"])
+    write_csv(
+        tables_dir / "selected_candidates.csv",
+        selected_rows,
+        [
+            "dataset",
+            "task_type",
+            "source",
+            "selected_path",
+            "score",
+            "note_count",
+            "duration_seconds",
+            "notes_per_second",
+            "reject_reason",
+        ],
+    )
     write_csv(tables_dir / "figures.csv", figure_rows, ["dataset", "figure", "kind"])
     summary = {
         "dataset_summary": str((tables_dir / "dataset_summary.csv").relative_to(ROOT)),

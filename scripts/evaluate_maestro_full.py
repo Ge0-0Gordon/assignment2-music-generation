@@ -126,9 +126,27 @@ def indexed_candidate_rows(indexed_dir: Path, dataset_name: str) -> tuple[list[d
     for run_dir in sorted(indexed_dir.glob("run_*")):
         if not run_dir.is_dir():
             continue
-        ranking_rows.extend(read_csv_rows(run_dir / "candidate_ranking.csv"))
-        for path in sorted(run_dir.glob("symbolic_*.mid")):
+        for candidate in read_csv_rows(run_dir / "candidate_ranking.csv"):
+            candidate_path = candidate.get("source_path") or candidate.get("path")
+            if candidate_path:
+                path = resolve(candidate_path)
+                if path.exists():
+                    refreshed = asdict(analyze_candidate(path))
+                    refreshed["dataset"] = dataset_name
+                    refreshed["source_path"] = str(path.relative_to(ROOT))
+                    refreshed["run"] = run_dir.name
+                    candidate = refreshed
+            ranking_rows.append(candidate)
+        for selected in read_csv_rows(run_dir / "selected_candidates.csv"):
+            selected_path = selected.get("selected_path", "")
+            if not selected_path:
+                continue
+            path = resolve(selected_path)
+            if not path.exists():
+                continue
             row = asdict(analyze_candidate(path))
+            if not row["usable"]:
+                continue
             row["dataset"] = dataset_name
             row["model_type"] = "transformer"
             row["run"] = run_dir.name

@@ -24,6 +24,19 @@ RUN_SETTINGS = [
     ("run_003", 0.9, 50),
 ]
 
+MODE_RUN_SETTINGS = [
+    ("run_bos", "pure_bos"),
+    ("run_seeded", "structural_seeded"),
+]
+
+MAESTRO_GENERATION_PRESET = {
+    "candidate_count": 10,
+    "generate_tokens": 768,
+    "temperatures": [0.8, 0.9, 1.0],
+    "top_ks": [50, 100],
+    "selection_rule": "highest score among usable candidates after hard reject filters",
+}
+
 
 def resolve(path: str) -> Path:
     resolved = Path(path)
@@ -54,8 +67,20 @@ def collect_candidates(source_dir: Path, temperature: float, top_k: int) -> list
     )
 
 
+def collect_mode_candidates(source_dir: Path, generation_mode: str) -> list[Path]:
+    return sorted(
+        path
+        for path in source_dir.glob("transformer_*.mid*")
+        if generation_mode in path.stem
+    )
+
+
 def best_by_task(rows: list[dict[str, object]], task_type: str) -> dict[str, object] | None:
-    task_rows = [row for row in rows if row["task_type"] == task_type and row["valid"]]
+    task_rows = [
+        row
+        for row in rows
+        if row["task_type"] == task_type and row["valid"] and row.get("usable", False)
+    ]
     task_rows.sort(key=lambda row: float(row["score"]), reverse=True)
     return task_rows[0] if task_rows else None
 
@@ -66,6 +91,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default="outputs/candidates/final/maestro")
     parser.add_argument("--metrics-summary", default="outputs/metrics/maestro_full/summary.json")
     parser.add_argument("--dataset-name", default="maestro_full")
+    parser.add_argument("--include-mode-runs", action="store_true")
     args = parser.parse_args()
 
     source_dir = resolve(args.source_dir)
@@ -75,10 +101,27 @@ def main() -> None:
 
     all_selected: list[dict[str, object]] = []
     run_summaries: list[dict[str, object]] = []
-    for run_name, temperature, top_k in RUN_SETTINGS:
+    run_specs: list[dict[str, object]] = [
+        {"run_name": run_name, "temperature": temperature, "top_k": top_k, "generation_mode": None}
+        for run_name, temperature, top_k in RUN_SETTINGS
+    ]
+    if args.include_mode_runs:
+        run_specs.extend(
+            {"run_name": run_name, "temperature": None, "top_k": None, "generation_mode": generation_mode}
+            for run_name, generation_mode in MODE_RUN_SETTINGS
+        )
+
+    for spec in run_specs:
+        run_name = str(spec["run_name"])
+        temperature = spec["temperature"]
+        top_k = spec["top_k"]
+        generation_mode = spec["generation_mode"]
         run_dir = output_dir / run_name
         run_dir.mkdir(parents=True, exist_ok=True)
-        candidates = collect_candidates(source_dir, temperature, top_k)
+        if generation_mode:
+            candidates = collect_mode_candidates(source_dir, str(generation_mode))
+        else:
+            candidates = collect_candidates(source_dir, float(temperature), int(top_k))
         ranking_rows: list[dict[str, object]] = []
         for candidate in candidates:
             row = asdict(analyze_candidate(candidate))
@@ -105,6 +148,8 @@ def main() -> None:
             "unique_pitch_count",
             "max_simultaneous_notes",
             "repeated_pitch_bigram_rate",
+            "usable",
+            "reject_reason",
             "score",
             "source_path",
         ]
@@ -117,6 +162,23 @@ def main() -> None:
         }.items():
             best = best_by_task(ranking_rows, task_type)
             if best is None:
+                selected_rows.append(
+                    {
+                        "run": run_name,
+                        "dataset": args.dataset_name,
+                        "task_type": task_type,
+                        "selected_path": "",
+                        "source_path": "",
+                        "score": "",
+                        "note_count": "",
+                        "duration_seconds": "",
+                        "notes_per_second": "",
+                        "pitch_range": "",
+                        "max_simultaneous_notes": "",
+                        "repeated_pitch_bigram_rate": "",
+                        "reject_reason": "No usable Transformer candidate found; need regeneration.",
+                    }
+                )
                 continue
             source = Path(str(best["path"]))
             if not source.is_absolute():
@@ -136,6 +198,7 @@ def main() -> None:
                 "pitch_range": best["pitch_range"],
                 "max_simultaneous_notes": best["max_simultaneous_notes"],
                 "repeated_pitch_bigram_rate": best["repeated_pitch_bigram_rate"],
+                "reject_reason": "",
             }
             selected_rows.append(selected)
             all_selected.append(selected)
@@ -156,6 +219,7 @@ def main() -> None:
                 "pitch_range",
                 "max_simultaneous_notes",
                 "repeated_pitch_bigram_rate",
+                "reject_reason",
             ],
         )
         config = {
@@ -164,21 +228,25 @@ def main() -> None:
             "source_dir": str(source_dir.relative_to(ROOT)),
             "temperature": temperature,
             "top_k": top_k,
+            "generation_mode_filter": generation_mode,
             "candidate_files_considered": len(candidates),
-            "selection_rule": "highest valid heuristic score per task_type",
+            "generation_preset_recommendation": MAESTRO_GENERATION_PRESET,
+            "selection_rule": MAESTRO_GENERATION_PRESET["selection_rule"],
             "metrics_summary": str(metrics_summary.relative_to(ROOT)) if metrics_summary.exists() else None,
             "checkpoint": summary.get("transformer", {}).get("best_checkpoint"),
             "generate_tokens": summary.get("generation", {}).get("generate_tokens"),
         }
         (run_dir / "generation_config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
         notes = [
-            f"{run_name}: temperature={temperature}, top_k={top_k}",
+            f"{run_name}: temperature={temperature}, top_k={top_k}, generation_mode={generation_mode or 'mixed_legacy'}",
             "Candidates were generated by the existing GPT2-style Transformer pipeline.",
-            "Selected files are copied from the highest valid heuristic score for each task.",
+            "Selected files are copied from usable candidates only; sparse, too short, too dense, or invalid MIDI is rejected.",
             "Listening notes placeholder: add qualitative observations after auditioning.",
         ]
         if len(selected_rows) < 2:
-            notes.append("Warning: one or more task types did not have a valid selected MIDI.")
+            notes.append("Warning: one or more task types did not have a selected row.")
+        if any(row.get("reject_reason") for row in selected_rows):
+            notes.append("No usable Transformer candidate found for one or more task types; need regeneration.")
         (run_dir / "notes.txt").write_text("\n".join(notes) + "\n", encoding="utf-8")
         run_summaries.append(config | {"selected": selected_rows})
 

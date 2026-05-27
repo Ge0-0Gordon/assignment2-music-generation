@@ -109,10 +109,11 @@ CONFIG = {
     "epochs": 100,
     "max_steps": 5000,
     "eval_interval": 250,
-    "generate_tokens": 512,
-    "candidate_count": 5,
-    "temperatures": [0.7, 0.8, 0.9, 1.0],
-    "top_ks": [20, 50],
+    "generate_tokens": 768,
+    "candidate_count": 10,
+    "decode_retry_attempts": 3,
+    "temperatures": [0.8, 0.9, 1.0],
+    "top_ks": [50, 100],
     "seed": 253,
     "resume_checkpoint": "outputs/checkpoints/maestro_full/best_transformer.pt",
 }
@@ -214,6 +215,7 @@ def train_command(config):
         "--eval-interval", str(config["eval_interval"]),
         "--generate-tokens", str(config["generate_tokens"]),
         "--candidate-count", str(config["candidate_count"]),
+        "--decode-retry-attempts", str(config["decode_retry_attempts"]),
         "--temperatures", list_arg(config["temperatures"]),
         "--top-ks", list_arg(config["top_ks"]),
         "--seed", str(config["seed"]),
@@ -310,6 +312,7 @@ def generate_command(config):
         "--resume-checkpoint", checkpoint,
         "--generate-tokens", str(config["generate_tokens"]),
         "--candidate-count", str(config["candidate_count"]),
+        "--decode-retry-attempts", str(config["decode_retry_attempts"]),
         "--temperatures", list_arg(config["temperatures"]),
         "--top-ks", list_arg(config["top_ks"]),
         "--seed", str(config["seed"]),
@@ -403,9 +406,13 @@ def save_single_indexed_run(config, run_id, notes):
         "unconditioned": "symbolic_unconditioned.mid",
         "conditioned": "symbolic_conditioned.mid",
     }.items():
-        task_df = ranking_df[(ranking_df["task_type"] == task) & (ranking_df["valid"] == True)].sort_values("score", ascending=False)
+        task_df = ranking_df[
+            (ranking_df["task_type"] == task)
+            & (ranking_df["valid"] == True)
+            & (ranking_df["usable"] == True)
+        ].sort_values("score", ascending=False)
         if task_df.empty:
-            print(f"No valid {task} candidate found.")
+            print(f"No usable Transformer {task} candidate found; need regeneration.")
             continue
         selected = task_df.iloc[0].to_dict()
         source = Path(selected["path"])
@@ -438,6 +445,7 @@ def save_single_indexed_run(config, run_id, notes):
         "checkpoint": best_checkpoint_from_summary(config),
         "generate_tokens": config["generate_tokens"],
         "candidate_count": config["candidate_count"],
+        "decode_retry_attempts": config["decode_retry_attempts"],
         "temperatures": config["temperatures"],
         "top_ks": config["top_ks"],
         "selection_rule": "highest valid heuristic score per task_type",

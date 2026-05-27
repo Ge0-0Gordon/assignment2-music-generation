@@ -42,6 +42,7 @@ from src.data import (  # noqa: E402
     pitch_class_histogram,
     split_files,
 )
+from src.evaluate import max_polyphony, read_note_events  # noqa: E402
 from src.markov import NGramModel  # noqa: E402
 from src.tokenizers import REMITokenizerSmoke, SimpleMIDITokenizer  # noqa: E402
 
@@ -141,6 +142,45 @@ def validate_midi_files(midi_files: list[Path]) -> tuple[list[Path], list[dict[s
                 }
             )
     return valid_files, skipped
+
+
+def input_quality_reject_reason(midi_path: Path, token_length: int, args: object) -> str:
+    reasons = []
+    if args.max_token_length is not None and token_length > args.max_token_length:
+        reasons.append(f"token_length_gt_{args.max_token_length}")
+    if not any(
+        value is not None
+        for value in (
+            args.min_notes,
+            args.max_notes,
+            args.min_notes_per_second,
+            args.max_notes_per_second,
+            args.max_polyphony,
+        )
+    ):
+        return ";".join(reasons)
+    try:
+        notes, ticks_per_beat = read_note_events(midi_path)
+    except Exception as exc:  # noqa: BLE001 - manifest records the precise file-level reason.
+        reasons.append(f"quality_parse_error={type(exc).__name__}: {exc}")
+        return ";".join(reasons)
+    note_count = len(notes)
+    duration_seconds = 0.0
+    notes_per_second = 0.0
+    if notes:
+        duration_seconds = max(end for _start, end, _pitch in notes) / max(ticks_per_beat, 1) * 0.5
+        notes_per_second = note_count / max(duration_seconds, 1e-6)
+    if args.min_notes is not None and note_count < args.min_notes:
+        reasons.append(f"note_count_lt_{args.min_notes}")
+    if args.max_notes is not None and note_count > args.max_notes:
+        reasons.append(f"note_count_gt_{args.max_notes}")
+    if args.min_notes_per_second is not None and notes_per_second < args.min_notes_per_second:
+        reasons.append(f"notes_per_second_lt_{args.min_notes_per_second}")
+    if args.max_notes_per_second is not None and notes_per_second > args.max_notes_per_second:
+        reasons.append(f"notes_per_second_gt_{args.max_notes_per_second}")
+    if args.max_polyphony is not None and max_polyphony(notes) > args.max_polyphony:
+        reasons.append(f"polyphony_gt_{args.max_polyphony}")
+    return ";".join(reasons)
 
 
 def encode_files(
@@ -468,18 +508,69 @@ def sample_transformer(
     return output
 
 
-def decode_with_retries(tokenizer: object, candidates: list[list[int]], output_path: Path) -> tuple[bool, int, str]:
+def decode_with_retries(tokenizer: object, candidates: list[list[int]], output_path: Path) -> tuple[bool, int, str, list[int]]:
     errors = []
     for ids in candidates:
         try:
             tokenizer.decode_ids(ids, output_path)
             notes = count_midi_notes(output_path)
             if notes > 0:
-                return True, notes, ""
+                return True, notes, "", ids
             errors.append("decoded zero-note MIDI")
         except Exception as exc:  # noqa: BLE001 - reports candidate decode failures.
             errors.append(f"{type(exc).__name__}: {exc}")
-    return False, 0, " | ".join(errors[-3:])
+    return False, 0, " | ".join(errors[-3:]), candidates[0] if candidates else []
+
+
+def token_label_for_id(tokenizer: object, token_id: int) -> str:
+    inner = getattr(tokenizer, "tokenizer", None)
+    if inner is not None:
+        try:
+            return str(inner.token_id_type(int(token_id)))
+        except Exception:  # noqa: BLE001 - fall back to vocab lookup when available.
+            vocab = getattr(inner, "vocab", None)
+            if isinstance(vocab, dict):
+                inverse = {int(value): str(key) for key, value in vocab.items()}
+                return inverse.get(int(token_id), "")
+    id_to_token = getattr(tokenizer, "id_to_token", None)
+    if isinstance(id_to_token, dict):
+        return str(id_to_token.get(int(token_id), ""))
+    return ""
+
+
+def token_type_summary(tokenizer: object, ids: list[int], decoded_note_count: int) -> dict[str, object]:
+    counts = {
+        "generated_token_count": len(ids),
+        "pitch_token_count": 0,
+        "bar_token_count": 0,
+        "position_token_count": 0,
+        "duration_token_count": 0,
+        "velocity_token_count": 0,
+        "other_token_count": 0,
+    }
+    for token_id in ids:
+        label = token_label_for_id(tokenizer, int(token_id))
+        token_type = label.split("_", 1)[0]
+        if token_type == "Pitch" or label.startswith("N_"):
+            counts["pitch_token_count"] += 1
+            if label.startswith("N_"):
+                counts["duration_token_count"] += 1
+                counts["velocity_token_count"] += 1
+        elif token_type == "Bar":
+            counts["bar_token_count"] += 1
+        elif token_type == "Position":
+            counts["position_token_count"] += 1
+        elif token_type == "Duration":
+            counts["duration_token_count"] += 1
+        elif token_type == "Velocity":
+            counts["velocity_token_count"] += 1
+        else:
+            counts["other_token_count"] += 1
+    generated = max(int(counts["generated_token_count"]), 1)
+    counts["decoded_note_count"] = decoded_note_count
+    counts["pitch_token_ratio"] = counts["pitch_token_count"] / generated
+    counts["decoded_notes_per_100_tokens"] = decoded_note_count * 100.0 / generated
+    return counts
 
 
 def parse_number_list(raw: str, cast: object) -> list[object]:
@@ -502,31 +593,38 @@ def generate_transformer_candidates(
     temperatures: list[float],
     top_ks: list[int],
     candidate_count: int,
+    decode_retry_attempts: int,
+    unconditioned_prefix: list[int],
+    unconditioned_mode: str,
 ) -> dict[str, dict[str, object]]:
     outputs: dict[str, dict[str, object]] = {}
     for task_name, seed_prefix in {
-        "unconditioned": [train_seed],
+        "unconditioned": unconditioned_prefix or [train_seed],
         "conditioned": prefix,
     }.items():
         for temperature in temperatures:
             for top_k in top_ks:
                 for index in range(candidate_count):
-                    max_new = generate_tokens - len(seed_prefix) if task_name == "conditioned" else generate_tokens - 1
-                    ids = sample_transformer(
-                        model,
-                        prefix=seed_prefix,
-                        max_new_tokens=max(1, max_new),
-                        vocab_size=vocab_size,
-                        block_size=block_size,
-                        temperature=temperature,
-                        top_k=top_k,
-                    )
+                    max_new = generate_tokens - len(seed_prefix)
+                    sampled_candidates = [
+                        sample_transformer(
+                            model,
+                            prefix=seed_prefix,
+                            max_new_tokens=max(1, max_new),
+                            vocab_size=vocab_size,
+                            block_size=block_size,
+                            temperature=temperature,
+                            top_k=top_k,
+                        )
+                        for _attempt in range(max(1, decode_retry_attempts))
+                    ]
+                    mode_tag = f"_{unconditioned_mode}" if task_name == "unconditioned" else ""
                     name = (
-                        f"transformer_{task_name}_temp{format_temperature(temperature)}_"
+                        f"transformer_{task_name}{mode_tag}_temp{format_temperature(temperature)}_"
                         f"topk{top_k}_idx{index:02d}"
                     )
                     path = output_dir / f"{name}.mid"
-                    valid, notes, error = decode_with_retries(tokenizer, [ids], path)
+                    valid, notes, error, selected_ids = decode_with_retries(tokenizer, sampled_candidates, path)
                     outputs[name] = {
                         "path": str(path.relative_to(ROOT)),
                         "valid": valid,
@@ -534,8 +632,12 @@ def generate_transformer_candidates(
                         "temperature": temperature,
                         "top_k": top_k,
                         "candidate_index": index,
+                        "generation_mode": unconditioned_mode if task_name == "unconditioned" else "conditioned_prefix",
+                        "prefix_token_count": len(seed_prefix),
+                        "decode_retry_attempts": max(1, decode_retry_attempts),
                         "error": error,
                     }
+                    outputs[name].update(token_type_summary(tokenizer, selected_ids, notes))
     return outputs
 
 
@@ -643,10 +745,19 @@ def parse_args() -> object:
     parser.add_argument("--checkpoint-dir", default=None)
     parser.add_argument("--resume-checkpoint", default=None)
     parser.add_argument("--eval-interval", type=int, default=0)
+    parser.add_argument("--min-notes", type=int, default=None)
+    parser.add_argument("--max-notes", type=int, default=None)
+    parser.add_argument("--min-notes-per-second", type=float, default=None)
+    parser.add_argument("--max-notes-per-second", type=float, default=None)
+    parser.add_argument("--max-token-length", type=int, default=None)
+    parser.add_argument("--max-polyphony", type=int, default=None)
     parser.add_argument("--generate-tokens", type=int, default=DEFAULT_GENERATE_TOKENS)
     parser.add_argument("--candidate-count", type=int, default=1)
+    parser.add_argument("--decode-retry-attempts", type=int, default=1)
     parser.add_argument("--temperatures", default=str(DEFAULT_TEMPERATURE))
     parser.add_argument("--top-ks", default=str(DEFAULT_TOP_K))
+    parser.add_argument("--unconditioned-mode", choices=["pure_bos", "structural_seeded"], default="pure_bos")
+    parser.add_argument("--unconditioned-prefix-tokens", type=int, default=32)
     parser.add_argument("--seed", type=int, default=SEED)
     return parser.parse_args()
 
@@ -715,6 +826,20 @@ def main() -> None:
     tokenizer, _initial_sequences, tokenizer_mode, tokenizer_detail = try_tokenizer(midi_files, output_dir)
     sequence_by_file, tokenization_skipped = encode_files(tokenizer, midi_files)
     skipped_files.extend(tokenization_skipped)
+    filtered_sequences: dict[Path, list[int]] = {}
+    for midi_path, ids in sequence_by_file.items():
+        reject_reason = input_quality_reject_reason(midi_path, len(ids), args)
+        if reject_reason:
+            skipped_files.append(
+                {
+                    "file_path": str(midi_path.relative_to(ROOT)) if midi_path.is_relative_to(ROOT) else str(midi_path),
+                    "reason": "quality_filter",
+                    "detail": reject_reason,
+                }
+            )
+            continue
+        filtered_sequences[midi_path] = ids
+    sequence_by_file = filtered_sequences
     midi_files = [path for path in midi_files if path in sequence_by_file]
     train_files = [path for path in train_files if path in sequence_by_file]
     valid_files = [path for path in valid_files if path in sequence_by_file]
@@ -784,7 +909,13 @@ def main() -> None:
 
     generation_block_size = int(transformer_metrics["block_size"])
     prefix = valid_windows[0][: min(generation_block_size // 2, len(valid_windows[0]))]
-    markov_uncond = markov.sample(args.generate_tokens, prefix=[train_windows[0][0]])
+    if args.unconditioned_mode == "structural_seeded":
+        unconditioned_prefix = valid_windows[0][
+            : max(1, min(args.unconditioned_prefix_tokens, generation_block_size // 2, len(valid_windows[0])))
+        ]
+    else:
+        unconditioned_prefix = [train_windows[0][0]]
+    markov_uncond = markov.sample(args.generate_tokens, prefix=unconditioned_prefix)
     markov_cond = markov.sample(args.generate_tokens, prefix=prefix)
     temperatures = [float(value) for value in parse_number_list(args.temperatures, float)]
     top_ks = [int(value) for value in parse_number_list(args.top_ks, int)]
@@ -795,8 +926,9 @@ def main() -> None:
         "markov_conditioned": [markov_cond],
     }.items():
         path = output_dir / f"{name}.mid"
-        valid, notes, error = decode_with_retries(tokenizer, candidates, path)
+        valid, notes, error, selected_ids = decode_with_retries(tokenizer, candidates, path)
         outputs[name] = {"path": str(path.relative_to(ROOT)), "valid": valid, "note_count": notes, "error": error}
+        outputs[name].update(token_type_summary(tokenizer, selected_ids, notes))
     outputs.update(
         generate_transformer_candidates(
             model=model,
@@ -810,6 +942,9 @@ def main() -> None:
             temperatures=temperatures,
             top_ks=top_ks,
             candidate_count=args.candidate_count,
+            decode_retry_attempts=args.decode_retry_attempts,
+            unconditioned_prefix=unconditioned_prefix,
+            unconditioned_mode=args.unconditioned_mode,
         )
     )
 
@@ -854,6 +989,9 @@ def main() -> None:
             "temperatures": temperatures,
             "top_ks": top_ks,
             "candidate_count_per_setting": args.candidate_count,
+            "decode_retry_attempts": args.decode_retry_attempts,
+            "unconditioned_mode": args.unconditioned_mode,
+            "unconditioned_prefix_tokens": len(unconditioned_prefix),
             "transformer_candidate_count": len([key for key in outputs if key.startswith("transformer_")]),
         },
         "metrics": {

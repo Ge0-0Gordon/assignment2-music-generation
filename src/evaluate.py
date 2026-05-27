@@ -8,6 +8,31 @@ from pathlib import Path
 
 import mido
 
+QUALITY_THRESHOLDS = {
+    "unconditioned": {
+        "min_notes": 50,
+        "min_duration_seconds": 10.0,
+        "min_notes_per_second": 0.8,
+        "max_notes_per_second": 10.0,
+        "max_polyphony": 32,
+        "min_unique_pitch_count": 4,
+        "min_pitch_range": 12,
+        "max_pitch_range": 96,
+        "max_repeated_pitch_bigram_rate": 0.85,
+    },
+    "conditioned": {
+        "min_notes": 50,
+        "min_duration_seconds": 10.0,
+        "min_notes_per_second": 0.8,
+        "max_notes_per_second": 10.0,
+        "max_polyphony": 32,
+        "min_unique_pitch_count": 4,
+        "min_pitch_range": 12,
+        "max_pitch_range": 96,
+        "max_repeated_pitch_bigram_rate": 0.85,
+    },
+}
+
 
 @dataclass
 class CandidateMetrics:
@@ -28,6 +53,8 @@ class CandidateMetrics:
     unique_pitch_count: int
     max_simultaneous_notes: int
     repeated_pitch_bigram_rate: float
+    usable: bool
+    reject_reason: str
     score: float
 
 
@@ -124,16 +151,57 @@ def infer_sampling_settings(path: Path) -> tuple[float | None, int | None, int |
     return temperature, top_k, candidate_index
 
 
-def score_candidate(metrics: CandidateMetrics) -> float:
+def candidate_reject_reason(metrics: CandidateMetrics) -> str:
     if not metrics.valid:
+        return "invalid_midi"
+    thresholds = QUALITY_THRESHOLDS.get(metrics.task_type, QUALITY_THRESHOLDS["unconditioned"])
+    reasons = []
+    if metrics.note_count < thresholds["min_notes"]:
+        reasons.append(f"note_count_lt_{thresholds['min_notes']}")
+    if metrics.duration_seconds < thresholds["min_duration_seconds"]:
+        reasons.append("duration_lt_10s")
+    if metrics.notes_per_second < thresholds["min_notes_per_second"]:
+        reasons.append("notes_per_second_lt_0p8")
+    if metrics.notes_per_second > thresholds["max_notes_per_second"]:
+        reasons.append("notes_per_second_gt_10")
+    if metrics.max_simultaneous_notes > thresholds["max_polyphony"]:
+        reasons.append(f"polyphony_gt_{thresholds['max_polyphony']}")
+    if metrics.unique_pitch_count < thresholds["min_unique_pitch_count"]:
+        reasons.append(f"unique_pitch_count_lt_{thresholds['min_unique_pitch_count']}")
+    if metrics.pitch_range < thresholds["min_pitch_range"]:
+        reasons.append(f"pitch_range_lt_{thresholds['min_pitch_range']}")
+    if metrics.pitch_range > thresholds["max_pitch_range"]:
+        reasons.append(f"pitch_range_gt_{thresholds['max_pitch_range']}")
+    if metrics.repeated_pitch_bigram_rate > thresholds["max_repeated_pitch_bigram_rate"]:
+        reasons.append("repetition_gt_0p85")
+    if metrics.pitch_min is not None and metrics.pitch_min < 12:
+        reasons.append("pitch_min_lt_12")
+    if metrics.pitch_max is not None and metrics.pitch_max > 120:
+        reasons.append("pitch_max_gt_120")
+    return ";".join(reasons)
+
+
+def score_candidate(metrics: CandidateMetrics) -> float:
+    if metrics.reject_reason:
         return -1e9
     density_penalty = abs(metrics.notes_per_second - 2.0)
     range_bonus = min(metrics.pitch_range, 36) / 36.0
     duration_bonus = min(metrics.duration_seconds, 90.0) / 90.0
     polyphony_penalty = max(0, metrics.max_simultaneous_notes - 8) * 0.25
-    repetition_penalty = metrics.repeated_pitch_bigram_rate * 2.0
+    repetition_penalty = metrics.repeated_pitch_bigram_rate * 3.0
+    narrow_range_penalty = max(0, 12 - metrics.pitch_range) / 12.0
+    extreme_range_penalty = max(0, metrics.pitch_range - 72) / 24.0
     note_bonus = min(metrics.note_count, 160) / 160.0
-    return note_bonus + range_bonus + duration_bonus - density_penalty * 0.15 - polyphony_penalty - repetition_penalty
+    return (
+        note_bonus
+        + range_bonus
+        + duration_bonus
+        - density_penalty * 0.15
+        - polyphony_penalty
+        - repetition_penalty
+        - narrow_range_penalty
+        - extreme_range_penalty
+    )
 
 
 def analyze_candidate(path: Path) -> CandidateMetrics:
@@ -185,7 +253,11 @@ def analyze_candidate(path: Path) -> CandidateMetrics:
         unique_pitch_count=unique_pitch_count,
         max_simultaneous_notes=simultaneous,
         repeated_pitch_bigram_rate=repetition,
+        usable=False,
+        reject_reason="",
         score=0.0,
     )
+    metrics.reject_reason = candidate_reject_reason(metrics)
+    metrics.usable = not metrics.reject_reason
     metrics.score = score_candidate(metrics)
     return metrics

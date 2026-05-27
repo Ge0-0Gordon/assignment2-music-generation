@@ -163,10 +163,43 @@ conda run -n cse253 python scripts\train_main.py --dataset-name maestro_full --i
 
 If CUDA memory runs out, keep the checkpoint paths and rerun with `--batch-size 8`.
 
+### MAESTRO Candidate Generation Preset
+
+For MAESTRO, use a larger candidate pool before ranking. This helps avoid sparse unconditioned decodes being accidentally selected:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name maestro_full --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\candidates\maestro_full --metrics-dir outputs\metrics\maestro_full --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --batch-size 16 --resume-checkpoint outputs\checkpoints\maestro_full\best_transformer.pt --generate-tokens 768 --candidate-count 10 --decode-retry-attempts 3 --temperatures '0.8,0.9,1.0' --top-ks '50,100' --seed 253
+```
+
+For a structural-seeded unconditioned pass, keep the same checkpoint but add a short prefix from the validation windows:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name maestro_full --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\candidates\maestro_full --metrics-dir outputs\metrics\maestro_full --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --batch-size 16 --resume-checkpoint outputs\checkpoints\maestro_full\best_transformer.pt --generate-tokens 1024 --candidate-count 10 --decode-retry-attempts 3 --temperatures '0.8,0.9,1.0' --top-ks '50,100' --unconditioned-mode structural_seeded --unconditioned-prefix-tokens 32 --seed 253
+```
+
+Then rebuild indexed candidates and evaluation:
+
+```powershell
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\maestro_full --output-dir outputs\candidates\final\maestro --metrics-summary outputs\metrics\maestro_full\summary.json --dataset-name maestro_full
+conda run -n cse253 python scripts\evaluate_maestro_full.py --metrics-dir outputs\metrics\maestro_full --indexed-dir outputs\candidates\final\maestro --output-dir outputs\evaluation\maestro_full --nottingham-summary outputs\metrics\nottingham_final\summary.json --nottingham-selected-dir outputs\candidates\selected\nottingham_final
+```
+
 ### Build Indexed Candidate Runs
 
 ```powershell
 conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\maestro_full --output-dir outputs\candidates\final\maestro --metrics-summary outputs\metrics\maestro_full\summary.json --dataset-name maestro_full
+```
+
+To also create mode-specific `run_bos` and `run_seeded` folders after mode-tagged candidates exist, add `--include-mode-runs`:
+
+```powershell
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\maestro_full --output-dir outputs\candidates\final\maestro --metrics-summary outputs\metrics\maestro_full\summary.json --dataset-name maestro_full --include-mode-runs
+```
+
+Candidate diagnostics include hard reject reasons and token/event summaries:
+
+```powershell
+conda run -n cse253 python scripts\diagnose_maestro_candidates.py
 ```
 
 ### Evaluate MAESTRO Full And Compare With Nottingham
