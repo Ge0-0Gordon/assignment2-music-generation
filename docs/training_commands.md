@@ -202,6 +202,22 @@ Candidate diagnostics include hard reject reasons and token/event summaries:
 conda run -n cse253 python scripts\diagnose_maestro_candidates.py
 ```
 
+### MAESTRO Clean Quality-Filtered Route
+
+Use this only if the current `maestro_full` checkpoint remains unstable after structural-seeded generation. This creates a separate clean manifest and separate outputs; it does not overwrite `maestro_full`.
+
+```powershell
+conda run -n cse253 python scripts\prepare_maestro_full.py --zip-path data\maestro-v3.0.0-midi.zip --output-dir data\raw\maestro_clean --min-notes 50 --min-notes-per-second 0.8 --max-notes-per-second 10 --max-token-length 32768 --max-polyphony 32
+```
+
+Recommended initial clean training run:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_clean --input-dir data\raw\maestro_clean\midi --manifest-csv data\raw\maestro_clean\manifest.csv --output-dir outputs\candidates\maestro_clean --metrics-dir outputs\metrics\maestro_clean --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --epochs 100 --max-steps 10000 --batch-size 16 --lr 0.0002 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\maestro_clean --eval-interval 250 --min-notes 50 --min-notes-per-second 0.8 --max-notes-per-second 10 --max-token-length 32768 --max-polyphony 32 --generate-tokens 1024 --candidate-count 20 --temperatures '0.8,0.9,1.0' --top-ks '50,100' --unconditioned-mode structural_seeded --unconditioned-prefix-tokens 32 --seed 253
+```
+
+For longer context, create a separate experiment such as `maestro_clean_ctx512`; do not overwrite `maestro_full` or the first `maestro_clean` checkpoint.
+
 ### Evaluate MAESTRO Full And Compare With Nottingham
 
 ```powershell

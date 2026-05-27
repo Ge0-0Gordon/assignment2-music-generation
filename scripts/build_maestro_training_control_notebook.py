@@ -109,15 +109,61 @@ CONFIG = {
     "epochs": 100,
     "max_steps": 5000,
     "eval_interval": 250,
-    "generate_tokens": 768,
-    "candidate_count": 10,
-    "decode_retry_attempts": 3,
+    "generate_tokens": 1024,
+    "candidate_count": 20,
+    "decode_retry_attempts": 1,
     "temperatures": [0.8, 0.9, 1.0],
     "top_ks": [50, 100],
+    "generation_mode": "structural_seeded",  # "pure_bos" or "structural_seeded"
+    "unconditioned_prefix_tokens": 32,
+    "run_id": "run_050k_seeded",
     "seed": 253,
     "resume_checkpoint": "outputs/checkpoints/maestro_full/best_transformer.pt",
+    "min_notes": None,
+    "max_notes": None,
+    "min_notes_per_second": None,
+    "max_notes_per_second": None,
+    "max_token_length": None,
+    "max_polyphony": None,
 }
 
+EXPERIMENTS = {
+    "maestro_full": {
+        "dataset_name": "maestro_full",
+        "input_dir": "data/raw/maestro_full/midi",
+        "manifest_csv": "data/raw/maestro_full/manifest.csv",
+        "output_dir": "outputs/candidates/maestro_full",
+        "metrics_dir": "outputs/metrics/maestro_full",
+        "checkpoint_dir": "outputs/checkpoints/maestro_full",
+        "resume_checkpoint": "outputs/checkpoints/maestro_full/best_transformer.pt",
+        "run_id": "run_050k_seeded",
+    },
+    "maestro_clean": {
+        "dataset_name": "maestro_clean",
+        "input_dir": "data/raw/maestro_clean/midi",
+        "manifest_csv": "data/raw/maestro_clean/manifest.csv",
+        "output_dir": "outputs/candidates/maestro_clean",
+        "metrics_dir": "outputs/metrics/maestro_clean",
+        "checkpoint_dir": "outputs/checkpoints/maestro_clean",
+        "resume_checkpoint": "",
+        "run_id": "run_clean_seeded_001",
+        "max_steps": 10000,
+        "min_notes": 50,
+        "min_notes_per_second": 0.8,
+        "max_notes_per_second": 10.0,
+        "max_token_length": 32768,
+        "max_polyphony": 32,
+    },
+}
+
+
+def select_experiment(name):
+    CONFIG.update(EXPERIMENTS[name])
+    return CONFIG
+
+
+# Change this to "maestro_clean" when preparing a clean subset or retraining.
+select_experiment("maestro_full")
 CONFIG
             """
         ),
@@ -141,14 +187,25 @@ input_dir = PROJECT_ROOT / CONFIG["input_dir"]
 
 if not manifest_path.exists():
     print("Manifest missing; preparing MAESTRO full MIDI-only manifest from local zip.")
-    run_command([
+    prepare_cmd = [
         sys.executable,
         "scripts/prepare_maestro_full.py",
         "--zip-path",
         "data/maestro-v3.0.0-midi.zip",
         "--output-dir",
         str(Path(CONFIG["manifest_csv"]).parent),
-    ])
+    ]
+    for flag, key in [
+        ("--min-notes", "min_notes"),
+        ("--max-notes", "max_notes"),
+        ("--min-notes-per-second", "min_notes_per_second"),
+        ("--max-notes-per-second", "max_notes_per_second"),
+        ("--max-token-length", "max_token_length"),
+        ("--max-polyphony", "max_polyphony"),
+    ]:
+        if CONFIG.get(key) is not None:
+            prepare_cmd.extend([flag, str(CONFIG[key])])
+    run_command(prepare_cmd)
 else:
     print("manifest exists:", manifest_path)
 
@@ -188,6 +245,20 @@ def list_arg(values):
     return ",".join(str(value) for value in values)
 
 
+def add_optional_quality_args(cmd, config):
+    for flag, key in [
+        ("--min-notes", "min_notes"),
+        ("--max-notes", "max_notes"),
+        ("--min-notes-per-second", "min_notes_per_second"),
+        ("--max-notes-per-second", "max_notes_per_second"),
+        ("--max-token-length", "max_token_length"),
+        ("--max-polyphony", "max_polyphony"),
+    ]:
+        if config.get(key) is not None:
+            cmd.extend([flag, str(config[key])])
+    return cmd
+
+
 def train_command(config):
     cmd = [
         sys.executable,
@@ -218,11 +289,13 @@ def train_command(config):
         "--decode-retry-attempts", str(config["decode_retry_attempts"]),
         "--temperatures", list_arg(config["temperatures"]),
         "--top-ks", list_arg(config["top_ks"]),
+        "--unconditioned-mode", config["generation_mode"],
+        "--unconditioned-prefix-tokens", str(config["unconditioned_prefix_tokens"]),
         "--seed", str(config["seed"]),
     ]
     if config.get("resume_checkpoint"):
         cmd.extend(["--resume-checkpoint", config["resume_checkpoint"]])
-    return cmd
+    return add_optional_quality_args(cmd, config)
 
 
 RUN_TRAINING = False  # Change to True when you are ready to launch a long training/resume run.
@@ -295,7 +368,7 @@ def generate_command(config):
     checkpoint = best_checkpoint_from_summary(config)
     if not checkpoint:
         raise RuntimeError("No checkpoint found. Set CONFIG['resume_checkpoint'] or train first.")
-    return [
+    cmd = [
         sys.executable,
         "scripts/train_main.py",
         "--mode", "generate",
@@ -315,8 +388,11 @@ def generate_command(config):
         "--decode-retry-attempts", str(config["decode_retry_attempts"]),
         "--temperatures", list_arg(config["temperatures"]),
         "--top-ks", list_arg(config["top_ks"]),
+        "--unconditioned-mode", config["generation_mode"],
+        "--unconditioned-prefix-tokens", str(config["unconditioned_prefix_tokens"]),
         "--seed", str(config["seed"]),
     ]
+    return add_optional_quality_args(cmd, config)
 
 
 RUN_GENERATION = False  # Change to True to generate/refresh candidates from the best checkpoint.
@@ -362,6 +438,19 @@ for path in [dataset_summary_path, model_metrics_path, ranking_path, selected_pa
 if ranking_path.exists():
     ranking_df = pd.read_csv(ranking_path)
     display(ranking_df.sort_values("score", ascending=False).head(20))
+    if "usable" in ranking_df and "reject_reason" in ranking_df:
+        display(
+            ranking_df.groupby(["task_type", "usable"], dropna=False)
+            .size()
+            .reset_index(name="count")
+        )
+        display(
+            ranking_df.loc[ranking_df["usable"] == False, "reject_reason"]
+            .value_counts()
+            .head(15)
+            .rename_axis("reject_reason")
+            .reset_index(name="count")
+        )
 else:
     print("No candidate_ranking.csv yet.")
 
@@ -382,6 +471,7 @@ from src.evaluate import analyze_candidate
 
 
 RUN_ID = "run_004"  # Change this before saving a new indexed run.
+RUN_ID = CONFIG.get("run_id", RUN_ID)
 RUN_NOTES = "Listening notes placeholder. Add observations after auditioning."
 
 
@@ -448,7 +538,9 @@ def save_single_indexed_run(config, run_id, notes):
         "decode_retry_attempts": config["decode_retry_attempts"],
         "temperatures": config["temperatures"],
         "top_ks": config["top_ks"],
-        "selection_rule": "highest valid heuristic score per task_type",
+        "generation_mode": config["generation_mode"],
+        "unconditioned_prefix_tokens": config["unconditioned_prefix_tokens"],
+        "selection_rule": "highest score among usable candidates after hard reject filters",
     }
     (run_dir / "generation_config.json").write_text(json.dumps(generation_config, indent=2), encoding="utf-8")
     (run_dir / "notes.txt").write_text(notes.strip() + "\n", encoding="utf-8")

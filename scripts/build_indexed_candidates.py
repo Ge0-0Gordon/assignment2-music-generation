@@ -71,8 +71,12 @@ def collect_mode_candidates(source_dir: Path, generation_mode: str) -> list[Path
     return sorted(
         path
         for path in source_dir.glob("transformer_*.mid*")
-        if generation_mode in path.stem
+        if generation_mode in path.stem or path.stem.startswith("transformer_conditioned_")
     )
+
+
+def collect_all_candidates(source_dir: Path) -> list[Path]:
+    return sorted(source_dir.glob("transformer_*.mid*"))
 
 
 def best_by_task(rows: list[dict[str, object]], task_type: str) -> dict[str, object] | None:
@@ -92,6 +96,8 @@ def main() -> None:
     parser.add_argument("--metrics-summary", default="outputs/metrics/maestro_full/summary.json")
     parser.add_argument("--dataset-name", default="maestro_full")
     parser.add_argument("--include-mode-runs", action="store_true")
+    parser.add_argument("--single-run-name", default=None)
+    parser.add_argument("--generation-mode-filter", default=None)
     args = parser.parse_args()
 
     source_dir = resolve(args.source_dir)
@@ -101,15 +107,25 @@ def main() -> None:
 
     all_selected: list[dict[str, object]] = []
     run_summaries: list[dict[str, object]] = []
-    run_specs: list[dict[str, object]] = [
-        {"run_name": run_name, "temperature": temperature, "top_k": top_k, "generation_mode": None}
-        for run_name, temperature, top_k in RUN_SETTINGS
-    ]
-    if args.include_mode_runs:
-        run_specs.extend(
-            {"run_name": run_name, "temperature": None, "top_k": None, "generation_mode": generation_mode}
-            for run_name, generation_mode in MODE_RUN_SETTINGS
-        )
+    if args.single_run_name:
+        run_specs: list[dict[str, object]] = [
+            {
+                "run_name": args.single_run_name,
+                "temperature": None,
+                "top_k": None,
+                "generation_mode": args.generation_mode_filter,
+            }
+        ]
+    else:
+        run_specs = [
+            {"run_name": run_name, "temperature": temperature, "top_k": top_k, "generation_mode": None}
+            for run_name, temperature, top_k in RUN_SETTINGS
+        ]
+        if args.include_mode_runs:
+            run_specs.extend(
+                {"run_name": run_name, "temperature": None, "top_k": None, "generation_mode": generation_mode}
+                for run_name, generation_mode in MODE_RUN_SETTINGS
+            )
 
     for spec in run_specs:
         run_name = str(spec["run_name"])
@@ -120,6 +136,8 @@ def main() -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
         if generation_mode:
             candidates = collect_mode_candidates(source_dir, str(generation_mode))
+        elif args.single_run_name:
+            candidates = collect_all_candidates(source_dir)
         else:
             candidates = collect_candidates(source_dir, float(temperature), int(top_k))
         ranking_rows: list[dict[str, object]] = []
