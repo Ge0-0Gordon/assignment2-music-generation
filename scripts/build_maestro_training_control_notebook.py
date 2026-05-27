@@ -87,13 +87,15 @@ print("project imports: ok")
         markdown_cell("## 2. Experiment Configuration"),
         code_cell(
             r"""
-CONFIG = {
+BASE_CONFIG = {
     "dataset_name": "maestro_full",
     "input_dir": "data/raw/maestro_full/midi",
     "manifest_csv": "data/raw/maestro_full/manifest.csv",
     "output_dir": "outputs/candidates/maestro_full",
     "metrics_dir": "outputs/metrics/maestro_full",
     "checkpoint_dir": "outputs/checkpoints/maestro_full",
+    "final_indexed_dir": "outputs/candidates/final/maestro",
+    "evaluation_dir": "outputs/evaluation/maestro_full",
     "max_files": 0,
     "block_size": 256,
     "stride": 256,
@@ -135,8 +137,18 @@ EXPERIMENTS = {
         "output_dir": "outputs/candidates/maestro_full",
         "metrics_dir": "outputs/metrics/maestro_full",
         "checkpoint_dir": "outputs/checkpoints/maestro_full",
+        "final_indexed_dir": "outputs/candidates/final/maestro",
+        "evaluation_dir": "outputs/evaluation/maestro_full",
         "resume_checkpoint": "outputs/checkpoints/maestro_full/best_transformer.pt",
         "run_id": "run_050k_seeded",
+        "lr": 0.0002,
+        "max_steps": 5000,
+        "min_notes": None,
+        "max_notes": None,
+        "min_notes_per_second": None,
+        "max_notes_per_second": None,
+        "max_token_length": None,
+        "max_polyphony": None,
     },
     "maestro_clean": {
         "dataset_name": "maestro_clean",
@@ -145,9 +157,22 @@ EXPERIMENTS = {
         "output_dir": "outputs/candidates/maestro_clean",
         "metrics_dir": "outputs/metrics/maestro_clean",
         "checkpoint_dir": "outputs/checkpoints/maestro_clean",
+        "final_indexed_dir": "outputs/candidates/final/maestro_clean",
+        "evaluation_dir": "outputs/evaluation/maestro_clean",
         "resume_checkpoint": "",
-        "run_id": "run_clean_seeded_001",
+        "run_id": "run_clean_10k_seeded",
+        "lr": 0.0003,
         "max_steps": 10000,
+        "block_size": 256,
+        "stride": 256,
+        "n_embd": 256,
+        "n_layer": 4,
+        "n_head": 4,
+        "batch_size": 16,
+        "generation_mode": "structural_seeded",
+        "unconditioned_prefix_tokens": 32,
+        "candidate_count": 20,
+        "generate_tokens": 1024,
         "min_notes": 50,
         "min_notes_per_second": 0.8,
         "max_notes_per_second": 10.0,
@@ -157,13 +182,22 @@ EXPERIMENTS = {
 }
 
 
+CONFIG = BASE_CONFIG.copy()
+EXPERIMENT = "maestro_full"  # Change to "maestro_clean" for clean-subset retraining.
+
+
 def select_experiment(name):
+    CONFIG.clear()
+    CONFIG.update(BASE_CONFIG)
     CONFIG.update(EXPERIMENTS[name])
+    CONFIG["experiment"] = name
     return CONFIG
 
 
-# Change this to "maestro_clean" when preparing a clean subset or retraining.
-select_experiment("maestro_full")
+# Recommended maestro_clean defaults: block_size=256, stride=256, n_embd=256,
+# n_layer=4, n_head=4, batch_size=16, lr=0.0003, max_steps=10000,
+# resume_checkpoint="" for from-scratch clean training.
+select_experiment(EXPERIMENT)
 CONFIG
             """
         ),
@@ -186,26 +220,9 @@ manifest_path = PROJECT_ROOT / CONFIG["manifest_csv"]
 input_dir = PROJECT_ROOT / CONFIG["input_dir"]
 
 if not manifest_path.exists():
-    print("Manifest missing; preparing MAESTRO full MIDI-only manifest from local zip.")
-    prepare_cmd = [
-        sys.executable,
-        "scripts/prepare_maestro_full.py",
-        "--zip-path",
-        "data/maestro-v3.0.0-midi.zip",
-        "--output-dir",
-        str(Path(CONFIG["manifest_csv"]).parent),
-    ]
-    for flag, key in [
-        ("--min-notes", "min_notes"),
-        ("--max-notes", "max_notes"),
-        ("--min-notes-per-second", "min_notes_per_second"),
-        ("--max-notes-per-second", "max_notes_per_second"),
-        ("--max-token-length", "max_token_length"),
-        ("--max-polyphony", "max_polyphony"),
-    ]:
-        if CONFIG.get(key) is not None:
-            prepare_cmd.extend([flag, str(CONFIG[key])])
-    run_command(prepare_cmd)
+    print("manifest missing:", manifest_path)
+    print("Use the clean manifest preparation cell below if EXPERIMENT == 'maestro_clean'.")
+    print("For maestro_full, run scripts/prepare_maestro_full.py manually after checking local data paths.")
 else:
     print("manifest exists:", manifest_path)
 
@@ -236,6 +253,47 @@ if summary_path.exists():
     }]))
 else:
     print("No existing metrics summary yet. Run training to create token/window statistics.")
+            """
+        ),
+        markdown_cell("## 3a. Clean Manifest Preparation"),
+        code_cell(
+            r"""
+def prepare_clean_command(config):
+    output_dir = str(Path(config["manifest_csv"]).parent)
+    cmd = [
+        sys.executable,
+        "scripts/prepare_maestro_full.py",
+        "--zip-path", "data/maestro-v3.0.0-midi.zip",
+        "--output-dir", output_dir,
+    ]
+    for flag, key in [
+        ("--min-notes", "min_notes"),
+        ("--max-notes", "max_notes"),
+        ("--min-notes-per-second", "min_notes_per_second"),
+        ("--max-notes-per-second", "max_notes_per_second"),
+        ("--max-token-length", "max_token_length"),
+        ("--max-polyphony", "max_polyphony"),
+    ]:
+        if config.get(key) is not None:
+            cmd.extend([flag, str(config[key])])
+    return cmd
+
+
+RUN_PREPARE_CLEAN = False  # Set True only when EXPERIMENT == "maestro_clean" and you want to build the clean manifest.
+
+if EXPERIMENT != "maestro_clean":
+    print("Current EXPERIMENT is not maestro_clean; this cell only prints the clean preparation command when switched.")
+else:
+    clean_manifest = PROJECT_ROOT / CONFIG["manifest_csv"]
+    clean_cmd = prepare_clean_command(CONFIG)
+    print("clean manifest:", clean_manifest)
+    print("exists:", clean_manifest.exists())
+    print("Prepare command:")
+    print(" ".join(clean_cmd))
+    if RUN_PREPARE_CLEAN:
+        run_command(clean_cmd)
+    else:
+        print("Not running prepare. Set RUN_PREPARE_CLEAN = True to create data/raw/maestro_clean/.")
             """
         ),
         markdown_cell("## 4. Training / Resume"),
@@ -415,8 +473,8 @@ eval_cmd = [
     sys.executable,
     "scripts/evaluate_maestro_full.py",
     "--metrics-dir", CONFIG["metrics_dir"],
-    "--indexed-dir", "outputs/candidates/final/maestro",
-    "--output-dir", "outputs/evaluation/maestro_full",
+    "--indexed-dir", CONFIG["final_indexed_dir"],
+    "--output-dir", CONFIG["evaluation_dir"],
     "--nottingham-summary", "outputs/metrics/nottingham_final/summary.json",
     "--nottingham-selected-dir", "outputs/candidates/selected/nottingham_final",
 ]
@@ -426,7 +484,7 @@ print(" ".join(eval_cmd))
 if RUN_EVALUATION:
     run_command(eval_cmd)
 
-tables_dir = PROJECT_ROOT / "outputs/evaluation/maestro_full/tables"
+tables_dir = PROJECT_ROOT / CONFIG["evaluation_dir"] / "tables"
 ranking_path = tables_dir / "candidate_ranking.csv"
 selected_path = tables_dir / "selected_candidates.csv"
 model_metrics_path = tables_dir / "model_metrics.csv"
@@ -477,7 +535,7 @@ RUN_NOTES = "Listening notes placeholder. Add observations after auditioning."
 
 def save_single_indexed_run(config, run_id, notes):
     source_dir = PROJECT_ROOT / config["output_dir"]
-    run_dir = PROJECT_ROOT / "outputs/candidates/final/maestro" / run_id
+    run_dir = PROJECT_ROOT / config["final_indexed_dir"] / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     candidate_paths = sorted(source_dir.glob("transformer_*.mid*"))
     rows = []
@@ -559,12 +617,12 @@ else:
         markdown_cell("## 9. Quick Listening Helper"),
         code_cell(
             r"""
-selected_path = PROJECT_ROOT / "outputs/evaluation/maestro_full/tables/selected_candidates.csv"
+selected_path = PROJECT_ROOT / CONFIG["evaluation_dir"] / "tables" / "selected_candidates.csv"
 if selected_path.exists():
     selected_df = pd.read_csv(selected_path)
     display(selected_df[["run", "task_type", "selected_path", "note_count", "duration_seconds", "notes_per_second", "pitch_range"]])
     print("Open a MIDI from PowerShell with:")
-    print("Invoke-Item 'outputs\\candidates\\final\\maestro\\run_001\\symbolic_conditioned.mid'")
+    print(f"Invoke-Item '{CONFIG['final_indexed_dir']}\\{CONFIG['run_id']}\\symbolic_conditioned.mid'")
 else:
     print("No selected candidates table yet.")
             """
