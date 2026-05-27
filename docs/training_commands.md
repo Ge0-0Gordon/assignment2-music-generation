@@ -121,6 +121,60 @@ conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name 
 conda run -n cse253 python scripts\analyze_candidates.py --datasets maestro_final --output-dir outputs\evaluation\maestro_final --transformer-only-selected
 ```
 
+## MAESTRO MIDI-Only Full Official-Split Route
+
+Local sources:
+
+```text
+data\maestro-v3.0.0-midi.zip
+data\raw\maestro_full\manifest.csv
+data\raw\maestro_full\midi
+```
+
+This route uses official MAESTRO metadata, trains on official `train`, validates on official `validation`, and excludes official `test` from the training/evaluation run.
+
+### Prepare Full MIDI Manifest
+
+```powershell
+conda run -n cse253 python scripts\prepare_maestro_full.py --zip-path data\maestro-v3.0.0-midi.zip --output-dir data\raw\maestro_full
+```
+
+### Completed Bounded Training Runs
+
+Initial 512-step comparison run:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_full --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\candidates\maestro_full --metrics-dir outputs\metrics\maestro_full --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --epochs 20 --max-steps 512 --batch-size 16 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\maestro_full --eval-interval 64 --generate-tokens 384 --candidate-count 3 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --seed 253
+```
+
+Completed 3000-step resume run, bringing the checkpoint to 3512 total steps:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_full --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\candidates\maestro_full --metrics-dir outputs\metrics\maestro_full --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --epochs 100 --max-steps 3000 --batch-size 16 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\maestro_full --resume-checkpoint outputs\checkpoints\maestro_full\best_transformer.pt --eval-interval 250 --generate-tokens 512 --candidate-count 5 --temperatures '0.7,0.8,0.9,1.0' --top-ks '20,50' --seed 253
+```
+
+### Optional Further Resume Run
+
+Use this only after reviewing the current indexed candidates:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_full --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\candidates\maestro_full --metrics-dir outputs\metrics\maestro_full --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --epochs 100 --max-steps 5000 --batch-size 16 --lr 0.0002 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\maestro_full --resume-checkpoint outputs\checkpoints\maestro_full\best_transformer.pt --eval-interval 250 --generate-tokens 512 --candidate-count 5 --temperatures '0.7,0.8,0.9,1.0' --top-ks '20,50' --seed 253
+```
+
+If CUDA memory runs out, keep the checkpoint paths and rerun with `--batch-size 8`.
+
+### Build Indexed Candidate Runs
+
+```powershell
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\maestro_full --output-dir outputs\candidates\final\maestro --metrics-summary outputs\metrics\maestro_full\summary.json --dataset-name maestro_full
+```
+
+### Evaluate MAESTRO Full And Compare With Nottingham
+
+```powershell
+conda run -n cse253 python scripts\evaluate_maestro_full.py --metrics-dir outputs\metrics\maestro_full --indexed-dir outputs\candidates\final\maestro --output-dir outputs\evaluation\maestro_full --nottingham-summary outputs\metrics\nottingham_final\summary.json --nottingham-selected-dir outputs\candidates\selected\nottingham_final
+```
+
 ## Healthy Training Checks
 
 - Train loss should generally trend downward over hundreds or thousands of steps.

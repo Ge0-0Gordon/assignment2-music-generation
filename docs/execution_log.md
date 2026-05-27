@@ -2,6 +2,103 @@
 
 This log records environment checks, commands, outcomes, and fallback decisions for the CSE253 Assignment 2 symbolic MIDI generation project.
 
+## 2026-05-26: MAESTRO MIDI-Only Full Official-Split Run
+
+### Scope
+
+- Reused the local `data/maestro-v3.0.0-midi.zip`; no audio was downloaded or used.
+- Prepared a MAESTRO full MIDI-only manifest from official metadata.
+- Trained the existing GPT2-style Transformer pipeline on official train/validation MIDI files with bounded `max_steps`.
+- Saved best checkpoint, metrics, flat candidates, indexed candidate runs, and MAESTRO full evaluation outputs.
+- Did not create final `submission/` files, did not export `workbook.html`, and did not commit or push.
+
+### Local Data
+
+```text
+MAESTRO local MIDI zip: data/maestro-v3.0.0-midi.zip
+Prepared MIDI path: data/raw/maestro_full/midi
+Prepared manifest: data/raw/maestro_full/manifest.csv
+Official metadata rows / MIDI files: 1276
+Official split: train 962, validation 137, test 177
+Used for training/eval: 1099 files (train + validation)
+Skipped: 177 files, reason split_excluded=test
+```
+
+### Commands Run
+
+```powershell
+pwd
+git status --short
+conda info --envs
+where.exe python
+python --version
+conda run -n cse253 python --version
+conda run -n cse253 where.exe python
+conda run -n cse253 python -c "import torch, json; print(json.dumps({'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count(), 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}, indent=2))"
+conda run -n cse253 python -c "import zipfile, csv, json, collections; z=zipfile.ZipFile('data/maestro-v3.0.0-midi.zip'); rows=list(csv.DictReader(__import__('io').TextIOWrapper(z.open('maestro-v3.0.0/maestro-v3.0.0.csv'), encoding='utf-8'))); print(json.dumps({'rows':len(rows),'splits':dict(collections.Counter(r['split'] for r in rows))}, indent=2))"
+conda run -n cse253 python -c "import ast, pathlib; files=[pathlib.Path(p) for p in ['scripts/train_main.py','scripts/prepare_maestro_full.py','scripts/build_indexed_candidates.py','scripts/evaluate_maestro_full.py','scripts/build_workbook.py']]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('syntax_ok', len(files))"
+conda run -n cse253 python scripts\prepare_maestro_full.py --zip-path data\maestro-v3.0.0-midi.zip --output-dir data\raw\maestro_full
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_full_verify --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\tmp\maestro_full_verify\candidates --metrics-dir outputs\tmp\maestro_full_verify\metrics --max-files 24 --block-size 64 --stride 64 --valid-fraction 0.2 --epochs 1 --max-steps 8 --batch-size 4 --lr 0.0003 --weight-decay 0.01 --n-embd 64 --n-layer 2 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\tmp\maestro_full_verify\checkpoints --eval-interval 4 --generate-tokens 96 --candidate-count 1 --temperatures 0.8 --top-ks 20 --seed 253
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_full --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\candidates\maestro_full --metrics-dir outputs\metrics\maestro_full --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --epochs 20 --max-steps 512 --batch-size 16 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\maestro_full --eval-interval 64 --generate-tokens 384 --candidate-count 3 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --seed 253
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_full --input-dir data\raw\maestro_full\midi --manifest-csv data\raw\maestro_full\manifest.csv --output-dir outputs\candidates\maestro_full --metrics-dir outputs\metrics\maestro_full --max-files 0 --block-size 256 --stride 256 --valid-fraction 0.2 --epochs 100 --max-steps 3000 --batch-size 16 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\maestro_full --resume-checkpoint outputs\checkpoints\maestro_full\best_transformer.pt --eval-interval 250 --generate-tokens 512 --candidate-count 5 --temperatures '0.7,0.8,0.9,1.0' --top-ks '20,50' --seed 253
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\maestro_full --output-dir outputs\candidates\final\maestro --metrics-summary outputs\metrics\maestro_full\summary.json --dataset-name maestro_full
+conda run -n cse253 python scripts\evaluate_maestro_full.py --metrics-dir outputs\metrics\maestro_full --indexed-dir outputs\candidates\final\maestro --output-dir outputs\evaluation\maestro_full --nottingham-summary outputs\metrics\nottingham_final\summary.json --nottingham-selected-dir outputs\candidates\selected\nottingham_final
+conda run -n cse253 python scripts\build_workbook.py
+```
+
+### MAESTRO Full Metrics
+
+```text
+token length min/max/mean: 416 / 53651 / 12621.8007
+train/validation windows: 48133 / 5497
+vocab_size: 512
+model: GPT2LMHeadModel from scratch
+params: 3,356,160
+block_size: 256
+batch_size: 16
+n_embd/n_layer/n_head/dropout: 256 / 4 / 4 / 0.1
+steps_completed in resume run: 3000
+total_steps_including_resume: 3512
+train_loss_last: 3.7378041744232178
+valid_loss: 3.9950605436813
+valid_perplexity: 54.32912980976267
+best checkpoint: outputs/checkpoints/maestro_full/best_transformer.pt
+```
+
+### Indexed Candidate Runs
+
+```text
+run_001: temperature 0.7, top_k 20
+  selected unconditioned: outputs/candidates/final/maestro/run_001/symbolic_unconditioned.mid
+  selected conditioned: outputs/candidates/final/maestro/run_001/symbolic_conditioned.mid
+run_002: temperature 0.8, top_k 50
+  selected unconditioned: outputs/candidates/final/maestro/run_002/symbolic_unconditioned.mid
+  selected conditioned: outputs/candidates/final/maestro/run_002/symbolic_conditioned.mid
+run_003: temperature 0.9, top_k 50
+  selected unconditioned: outputs/candidates/final/maestro/run_003/symbolic_unconditioned.mid
+  selected conditioned: outputs/candidates/final/maestro/run_003/symbolic_conditioned.mid
+```
+
+Each run contains `symbolic_unconditioned.mid`, `symbolic_conditioned.mid`, `candidate_ranking.csv`, `selected_candidates.csv`, `generation_config.json`, and `notes.txt`.
+
+### Evaluation Outputs
+
+```text
+outputs/evaluation/maestro_full/tables/dataset_summary.csv
+outputs/evaluation/maestro_full/tables/model_metrics.csv
+outputs/evaluation/maestro_full/tables/candidate_ranking.csv
+outputs/evaluation/maestro_full/tables/selected_candidates.csv
+outputs/evaluation/maestro_full/tables/nottingham_vs_maestro_selected.csv
+outputs/evaluation/maestro_full/figures/maestro_full_token_lengths.png
+outputs/evaluation/maestro_full/figures/maestro_full_pitch_class_histogram.png
+```
+
+### Current Comparison
+
+- Nottingham final remains the safer final fallback right now: validation perplexity is much lower (`3.381` vs MAESTRO full `54.329`) and selected unconditioned outputs are less sparse.
+- MAESTRO full is now a real official-split experiment with 3,512 total training steps. Conditioned samples improved and are valid, but unconditioned samples remain inconsistent and often sparse/repetitive.
+- Recommended next step: listen to the indexed MAESTRO candidates, then optionally resume MAESTRO full from `outputs/checkpoints/maestro_full/best_transformer.pt` for 5000+ additional steps before replacing Nottingham.
+
 ## 2026-05-26: Planning Session
 
 ### Scope

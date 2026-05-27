@@ -12,11 +12,19 @@ ROOT = Path(__file__).resolve().parents[1]
 EVAL_DIR = ROOT / "outputs" / "evaluation"
 TABLE_DIR = EVAL_DIR / "tables"
 FIG_DIR = EVAL_DIR / "figures"
+MAESTRO_FULL_EVAL_DIR = EVAL_DIR / "maestro_full"
 NOTEBOOK_PATH = ROOT / "notebooks" / "workbook.ipynb"
 
 
 def read_table(name: str) -> pd.DataFrame:
     path = TABLE_DIR / name
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+
+def read_eval_table(eval_dir: Path, name: str) -> pd.DataFrame:
+    path = eval_dir / "tables" / name
     if not path.exists():
         return pd.DataFrame()
     return pd.read_csv(path)
@@ -42,9 +50,11 @@ def selected_paths(df: pd.DataFrame) -> str:
         return "_No selected candidates recorded yet._"
     lines = []
     for row in df.to_dict(orient="records"):
+        source = row.get("source") or row.get("source_path") or row.get("path") or ""
+        run = f" {row['run']}" if "run" in row and pd.notna(row["run"]) else ""
         lines.append(
-            f"- {row['dataset']} {row['task_type']}: `{row['selected_path']}` "
-            f"(source `{row['source']}`)"
+            f"- {row['dataset']}{run} {row['task_type']}: `{row['selected_path']}` "
+            f"(source `{source}`)"
         )
     return "\n".join(lines)
 
@@ -57,11 +67,32 @@ def figure_md(filename: str, caption: str) -> str:
     return f"![{caption}]({rel.as_posix()})\n\n_{caption}_"
 
 
+def maestro_full_figure_md(filename: str, caption: str) -> str:
+    path = MAESTRO_FULL_EVAL_DIR / "figures" / filename
+    if not path.exists():
+        return f"_{caption}: figure not available yet._"
+    rel = Path("..") / "outputs" / "evaluation" / "maestro_full" / "figures" / filename
+    return f"![{caption}]({rel.as_posix()})\n\n_{caption}_"
+
+
 def main() -> None:
     dataset = read_table("dataset_summary.csv")
     models = read_table("model_metrics.csv")
     candidates = read_table("candidate_ranking.csv")
     selected = read_table("selected_candidates.csv")
+    maestro_full_dataset = read_eval_table(MAESTRO_FULL_EVAL_DIR, "dataset_summary.csv")
+    maestro_full_models = read_eval_table(MAESTRO_FULL_EVAL_DIR, "model_metrics.csv")
+    maestro_full_candidates = read_eval_table(MAESTRO_FULL_EVAL_DIR, "candidate_ranking.csv")
+    maestro_full_selected = read_eval_table(MAESTRO_FULL_EVAL_DIR, "selected_candidates.csv")
+    maestro_comparison = read_eval_table(MAESTRO_FULL_EVAL_DIR, "nottingham_vs_maestro_selected.csv")
+    if not maestro_full_dataset.empty:
+        dataset = pd.concat([dataset, maestro_full_dataset], ignore_index=True).drop_duplicates(
+            subset=["dataset"], keep="last"
+        )
+    if not maestro_full_models.empty:
+        models = pd.concat([models, maestro_full_models], ignore_index=True).drop_duplicates(
+            subset=["dataset"], keep="last"
+        )
 
     nb = nbf.v4.new_notebook()
     nb.cells = [
@@ -89,9 +120,9 @@ def main() -> None:
         nbf.v4.new_markdown_cell(
             "## 2. Dataset and Preprocessing\n\n"
             "The current draft uses the final-scale Nottingham MIDI run as the "
-            "main route and includes a bounded MAESTRO MIDI-only experiment as an "
-            "optional comparison. Audio was not used. Files are split into "
-            "train/validation partitions, tokenized, and converted into "
+            "safe fallback/main route and includes a MAESTRO MIDI-only full "
+            "official-split bounded experiment as a serious comparison. Audio was "
+            "not used. Files are split into train/validation partitions, tokenized, and converted into "
             "fixed-length next-token windows.\n\n"
             "### Dataset Summary\n\n" + markdown_table(dataset)
         ),
@@ -116,19 +147,22 @@ def main() -> None:
             "## 5. GPT2-Style Causal Transformer Trained From Scratch\n\n"
             "The neural model uses `GPT2Config` and `GPT2LMHeadModel(config)` as a "
             "decoder-only Transformer architecture. The model is randomly "
-            "initialized and trained on MIDI token windows. The Nottingham "
-            "final-scale run used 500 MIDI files, a 450/50 train/validation split, "
-            "`block_size=256`, `n_embd=256`, `n_layer=4`, `n_head=4`, dropout "
-            "`0.1`, and 3,000 training steps. Its best checkpoint reached "
-            "validation loss 2.9286 and validation perplexity 18.7009."
+            "initialized and trained on MIDI token windows. The current Nottingham "
+            "final checkpoint uses the same 3.36M-parameter configuration as the "
+            "MAESTRO full run. The MAESTRO full bounded run used official train/"
+            "validation splits, `block_size=256`, `n_embd=256`, `n_layer=4`, "
+            "`n_head=4`, dropout `0.1`, and 3,512 total training steps."
         ),
         nbf.v4.new_markdown_cell(
-            "## 6. Optional MAESTRO MIDI-Only Experiment\n\n"
-            "A bounded MAESTRO MIDI-only comparison was run from local data. The "
-            "subset used 120 short MIDI files selected from local metadata, with "
-            "audio excluded. This run is useful context, but Nottingham remains "
-            "the recommended final route because its final-scale Transformer has "
-            "much stronger validation perplexity and longer selected candidates."
+            "## 6. MAESTRO MIDI-Only Full Experiment\n\n"
+            "MAESTRO was promoted from optional smoke test to an official-split "
+            "MIDI-only comparison. The local archive contained 1,276 MIDI files. "
+            "The run used 962 official train files and 137 official validation "
+            "files; 177 official test files were excluded from training/evaluation "
+            "and recorded as skipped. The bounded/resumed Transformer reached "
+            "validation loss 3.9951 and validation perplexity 54.3291. This is a "
+            "real comparison artifact, but still early-training rather than a final "
+            "quality pass."
         ),
         nbf.v4.new_markdown_cell(
             "## 7. Reproducible Training Commands\n\n"
@@ -158,16 +192,32 @@ def main() -> None:
             "Candidate MIDI files are checked for parseability and nonzero notes. "
             "The ranking table below is a rough quantitative screen, not a "
             "substitute for listening.\n\n"
-            "### Candidate Ranking\n\n" + markdown_table(candidates)
+            "### Candidate Ranking\n\n"
+            + markdown_table(candidates)
+            + "\n\n### MAESTRO Full Indexed Candidate Ranking\n\n"
+            + markdown_table(maestro_full_candidates)
         ),
         nbf.v4.new_markdown_cell(
-            "### Selected Current Candidates\n\n" + selected_paths(selected)
+            "### Selected Current Candidates\n\n"
+            + selected_paths(selected)
+            + "\n\n### MAESTRO Full Indexed Selected Candidates\n\n"
+            + selected_paths(maestro_full_selected)
+        ),
+        nbf.v4.new_markdown_cell(
+            "### Nottingham Final vs MAESTRO Full Selected Candidates\n\n"
+            + markdown_table(maestro_comparison)
+            + "\n\nCurrent interpretation: Nottingham remains the safer final fallback because "
+            "its validation perplexity is much lower and its selected outputs are "
+            "longer and less sparse. MAESTRO full should be resumed for more steps "
+            "before replacing Nottingham as the final route."
         ),
         nbf.v4.new_markdown_cell(
             "### Token Length Distributions\n\n"
             + figure_md("nottingham_final_token_lengths.png", "Nottingham final token length distribution")
             + "\n\n"
             + figure_md("maestro_final_token_lengths.png", "MAESTRO final token length distribution")
+            + "\n\n"
+            + maestro_full_figure_md("maestro_full_token_lengths.png", "MAESTRO full token length distribution")
         ),
         nbf.v4.new_markdown_cell(
             "### Pitch-Class Histograms\n\n"
@@ -179,6 +229,11 @@ def main() -> None:
             + figure_md(
                 "maestro_final_pitch_class_histogram.png",
                 "MAESTRO final train vs selected generated pitch-class histogram",
+            )
+            + "\n\n"
+            + maestro_full_figure_md(
+                "maestro_full_pitch_class_histogram.png",
+                "MAESTRO full train vs selected generated pitch-class histogram",
             )
         ),
         nbf.v4.new_markdown_cell(

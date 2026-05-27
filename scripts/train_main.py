@@ -59,7 +59,10 @@ def try_tokenizer(midi_files: list[Path], output_dir: Path) -> tuple[object, lis
         try:
             tokenizer = REMITokenizerSmoke(num_velocities=num_velocities)
             tokenizer.fit(midi_files)
-            sequences = [tokenizer.encode_file(path) for path in midi_files]
+            sequence_by_file, _skipped = encode_files(tokenizer, midi_files)
+            sequences = list(sequence_by_file.values())
+            if not sequences:
+                raise ValueError("no files encoded with REMI")
             roundtrip = output_dir / f"roundtrip_remi_v{num_velocities}.mid"
             tokenizer.decode_ids(sequences[0], roundtrip)
             if count_midi_notes(roundtrip) == 0:
@@ -71,6 +74,103 @@ def try_tokenizer(midi_files: list[Path], output_dir: Path) -> tuple[object, lis
     tokenizer.fit(midi_files)
     sequences = [tokenizer.encode_file(path) for path in midi_files]
     return tokenizer, sequences, "simple_event", f"fallback_after_remi_error={last_error}"
+
+
+def parse_label_set(raw: str) -> set[str]:
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def load_manifest_split(
+    manifest_csv: Path,
+    path_column: str,
+    split_column: str,
+    train_labels: set[str],
+    valid_labels: set[str],
+) -> tuple[list[Path], list[Path], list[dict[str, object]]]:
+    train_files: list[Path] = []
+    valid_files: list[Path] = []
+    skipped: list[dict[str, object]] = []
+    with manifest_csv.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            raw_path = row.get(path_column, "")
+            split = row.get(split_column, "").strip().lower()
+            if not raw_path:
+                skipped.append({"file_path": "", "reason": "missing_manifest_path", "detail": ""})
+                continue
+            path = Path(raw_path)
+            if not path.is_absolute():
+                path = ROOT / path
+            if split in train_labels:
+                train_files.append(path)
+            elif split in valid_labels:
+                valid_files.append(path)
+            else:
+                skipped.append(
+                    {
+                        "file_path": str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path),
+                        "reason": "split_excluded",
+                        "detail": split,
+                    }
+                )
+    return train_files, valid_files, skipped
+
+
+def validate_midi_files(midi_files: list[Path]) -> tuple[list[Path], list[dict[str, object]]]:
+    valid_files: list[Path] = []
+    skipped: list[dict[str, object]] = []
+    for midi_path in midi_files:
+        try:
+            notes = count_midi_notes(midi_path)
+            if notes <= 0:
+                skipped.append(
+                    {
+                        "file_path": str(midi_path.relative_to(ROOT)) if midi_path.is_relative_to(ROOT) else str(midi_path),
+                        "reason": "zero_note_midi",
+                        "detail": "note_count=0",
+                    }
+                )
+                continue
+            valid_files.append(midi_path)
+        except Exception as exc:  # noqa: BLE001 - record bad input files and keep the run moving.
+            skipped.append(
+                {
+                    "file_path": str(midi_path.relative_to(ROOT)) if midi_path.is_relative_to(ROOT) else str(midi_path),
+                    "reason": "midi_parse_error",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return valid_files, skipped
+
+
+def encode_files(
+    tokenizer: object,
+    midi_files: list[Path],
+) -> tuple[dict[Path, list[int]], list[dict[str, object]]]:
+    sequences: dict[Path, list[int]] = {}
+    skipped: list[dict[str, object]] = []
+    for midi_path in midi_files:
+        try:
+            ids = tokenizer.encode_file(midi_path)
+            if len(ids) < 2:
+                skipped.append(
+                    {
+                        "file_path": str(midi_path.relative_to(ROOT)) if midi_path.is_relative_to(ROOT) else str(midi_path),
+                        "reason": "too_few_tokens",
+                        "detail": f"token_length={len(ids)}",
+                    }
+                )
+                continue
+            sequences[midi_path] = ids
+        except Exception as exc:  # noqa: BLE001 - report tokenizer failures per file.
+            skipped.append(
+                {
+                    "file_path": str(midi_path.relative_to(ROOT)) if midi_path.is_relative_to(ROOT) else str(midi_path),
+                    "reason": "tokenize_error",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return sequences, skipped
 
 
 def write_manifest(
@@ -98,6 +198,16 @@ def write_manifest(
                     "token_length": len(sequences[midi_path]),
                 }
             )
+
+
+def write_skipped_files(path: Path, skipped: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["file_path", "reason", "detail"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in skipped:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
 def make_batches(windows: list[list[int]], block_size: int, batch_size: int) -> list[tuple[torch.Tensor, torch.Tensor]]:
@@ -480,6 +590,11 @@ def parse_args() -> object:
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--metrics-dir", required=True)
+    parser.add_argument("--manifest-csv", default=None)
+    parser.add_argument("--manifest-path-column", default="file_path")
+    parser.add_argument("--manifest-split-column", default="split")
+    parser.add_argument("--train-split-labels", default="train")
+    parser.add_argument("--valid-split-labels", default="validation,valid")
     parser.add_argument("--max-files", type=int, default=150)
     parser.add_argument("--block-size", type=int, default=DEFAULT_BLOCK_SIZE)
     parser.add_argument("--stride", type=int, default=DEFAULT_STRIDE)
@@ -529,14 +644,51 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
-    discovered_files = discover_midi_files([input_dir])
-    midi_files = discovered_files if args.max_files <= 0 else discovered_files[: args.max_files]
-    if len(midi_files) < 2:
-        raise ValueError("Need at least two MIDI files for train/validation split")
-    train_files, valid_files = split_files(midi_files, args.valid_fraction)
+    skipped_files: list[dict[str, object]] = []
+    manifest_source = None
+    if args.manifest_csv:
+        manifest_csv = Path(args.manifest_csv)
+        if not manifest_csv.is_absolute():
+            manifest_csv = ROOT / manifest_csv
+        manifest_source = str(manifest_csv.relative_to(ROOT))
+        train_files, valid_files, manifest_skipped = load_manifest_split(
+            manifest_csv=manifest_csv,
+            path_column=args.manifest_path_column,
+            split_column=args.manifest_split_column,
+            train_labels=parse_label_set(args.train_split_labels),
+            valid_labels=parse_label_set(args.valid_split_labels),
+        )
+        skipped_files.extend(manifest_skipped)
+        midi_files = train_files + valid_files
+        if args.max_files > 0:
+            train_limit = max(1, round(args.max_files * (1.0 - args.valid_fraction)))
+            valid_limit = max(1, args.max_files - train_limit)
+            train_files = train_files[:train_limit]
+            valid_files = valid_files[:valid_limit]
+            midi_files = train_files + valid_files
+    else:
+        discovered_files = discover_midi_files([input_dir])
+        midi_files = discovered_files if args.max_files <= 0 else discovered_files[: args.max_files]
+        if len(midi_files) < 2:
+            raise ValueError("Need at least two MIDI files for train/validation split")
+        train_files, valid_files = split_files(midi_files, args.valid_fraction)
 
-    tokenizer, sequences, tokenizer_mode, tokenizer_detail = try_tokenizer(midi_files, output_dir)
-    sequence_by_file = dict(zip(midi_files, sequences))
+    midi_files, validation_skipped = validate_midi_files(midi_files)
+    skipped_files.extend(validation_skipped)
+    midi_file_set = set(midi_files)
+    train_files = [path for path in train_files if path in midi_file_set]
+    valid_files = [path for path in valid_files if path in midi_file_set]
+    if len(train_files) < 1 or len(valid_files) < 1:
+        raise ValueError("Need at least one valid train and validation MIDI file")
+
+    tokenizer, _initial_sequences, tokenizer_mode, tokenizer_detail = try_tokenizer(midi_files, output_dir)
+    sequence_by_file, tokenization_skipped = encode_files(tokenizer, midi_files)
+    skipped_files.extend(tokenization_skipped)
+    midi_files = [path for path in midi_files if path in sequence_by_file]
+    train_files = [path for path in train_files if path in sequence_by_file]
+    valid_files = [path for path in valid_files if path in sequence_by_file]
+    if len(train_files) < 1 or len(valid_files) < 1:
+        raise ValueError("Need at least one tokenized train and validation MIDI file")
     splits = {path: "train" for path in train_files}
     splits.update({path: "valid" for path in valid_files})
 
@@ -549,6 +701,8 @@ def main() -> None:
 
     manifest_path = metrics_dir / "manifest.csv"
     write_manifest(manifest_path, midi_files, splits, sequence_by_file, args.dataset_name)
+    skipped_files_path = metrics_dir / "skipped_files.csv"
+    write_skipped_files(skipped_files_path, skipped_files)
 
     markov = NGramModel(order=DEFAULT_MARKOV_ORDER, seed=SEED)
     markov.fit(train_windows)
@@ -638,14 +792,20 @@ def main() -> None:
     summary = {
         "dataset_name": args.dataset_name,
         "input_dir": str(input_dir.relative_to(ROOT)),
+        "manifest_source": manifest_source,
         "file_count": len(midi_files),
+        "skipped_file_count": len(skipped_files),
+        "skipped_file_reasons": {
+            reason: sum(1 for row in skipped_files if row.get("reason") == reason)
+            for reason in sorted({str(row.get("reason")) for row in skipped_files})
+        },
         "total_bytes": sum(path.stat().st_size for path in midi_files),
         "train_file_count": len(train_files),
         "valid_file_count": len(valid_files),
         "tokenizer_mode": tokenizer_mode,
         "tokenizer_detail": tokenizer_detail,
         "vocab_size": tokenizer.vocab_size,
-        "token_length_stats": token_stats(sequences),
+        "token_length_stats": token_stats(list(sequence_by_file.values())),
         "train_window_count": len(train_windows),
         "valid_window_count": len(valid_windows),
         "markov": {
@@ -663,6 +823,7 @@ def main() -> None:
         },
         "metrics": {
             "manifest": str(manifest_path.relative_to(ROOT)),
+            "skipped_files": str(skipped_files_path.relative_to(ROOT)),
             "pitch_class_histogram": str(pitch_hist_path.relative_to(ROOT)),
             "token_length_distribution": str(token_lengths_path.relative_to(ROOT)),
             "dataset_summary": str(dataset_summary_path.relative_to(ROOT)),

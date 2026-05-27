@@ -4,7 +4,7 @@
 
 **Goal:** Build a complete Assignment 2 pipeline for symbolic unconditioned MIDI generation and symbolic prefix-conditioned MIDI continuation.
 
-**Architecture:** Use one shared symbolic next-token pipeline: MIDI files are tokenized into REMI or fallback event tokens, split into train/validation windows, modeled with a Markov/n-gram baseline and a scratch-trained GPT-2-style causal Transformer, then sampled into the two required MIDI deliverables. The project proceeds MVP first, Transformer second, polish third, with Nottingham/tiny MIDI as the smoke-test/fallback dataset and MAESTRO small MIDI subset as the preferred final dataset if feasible.
+**Architecture:** Use one shared symbolic next-token pipeline: MIDI files are tokenized into REMI or fallback event tokens, split into train/validation windows, modeled with a Markov/n-gram baseline and a scratch-trained GPT-2-style causal Transformer, then sampled into the two required MIDI deliverables. The project proceeds MVP first, Transformer second, polish third. Nottingham is the current final fallback/main route; MAESTRO MIDI-only now has an official-split full-data bounded experiment for comparison.
 
 **Tech Stack:** Conda environment `cse253`, Python 3.11, PyTorch, MidiTok REMI, symusic/mido/midiutil as available, HuggingFace `transformers` if available for `GPT2Config` and `GPT2LMHeadModel`, custom PyTorch Transformer and LSTM fallbacks.
 
@@ -132,6 +132,25 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 - [x] Generate at least 20 Transformer candidates per task using multiple temperatures and top-k settings.
 - [x] Rank Transformer candidates and copy the selected draft outputs to `outputs/candidates/selected/nottingham_final/`.
 - [x] Create final-scale Nottingham evaluation tables and figures under `outputs/evaluation/nottingham_final/`.
+
+### Phase 1 Extension: MAESTRO MIDI-Only Full Official-Split Pass
+
+**Purpose:** Promote MAESTRO from optional bounded smoke test to a serious comparison run without downloading audio or rewriting the pipeline.
+
+- [x] Reuse local `data/maestro-v3.0.0-midi.zip`.
+- [x] Extract MIDI-only files and metadata under `data/raw/maestro_full/`.
+- [x] Build `data/raw/maestro_full/manifest.csv` from official MAESTRO metadata.
+- [x] Use official train/validation split and exclude official test from training/evaluation.
+- [x] Record skipped files and reasons in `outputs/metrics/maestro_full/skipped_files.csv`.
+- [x] Train the existing GPT2-style Transformer pipeline on MAESTRO train/validation with bounded steps.
+- [x] Save best checkpoint under `outputs/checkpoints/maestro_full/`.
+- [x] Save metrics under `outputs/metrics/maestro_full/`.
+- [x] Generate multiple Transformer candidates using temperature/top-k settings.
+- [x] Create indexed run folders under `outputs/candidates/final/maestro/run_001`, `run_002`, and `run_003`.
+- [x] Create MAESTRO full evaluation tables and figures under `outputs/evaluation/maestro_full/`.
+- [x] Compare MAESTRO full selected candidates with Nottingham final selected candidates.
+
+**Current result:** MAESTRO full used 1099 official train/validation MIDI files, skipped 177 official test files, reached validation loss `3.9951` / perplexity `54.3291` after 3512 total bounded steps, and produced valid indexed conditioned and unconditioned MIDI candidates. Nottingham remains the safer fallback because its current validation perplexity and selected unconditioned candidate quality are stronger.
 
 ## Phase 2: Tokenization
 
