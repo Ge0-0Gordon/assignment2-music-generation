@@ -15,11 +15,11 @@
 - [x] Work only inside this repository.
 - [x] Run Python through `conda run -n cse253 python ...`.
 - [x] Do not use the `base` environment for project execution.
-- [ ] Do not load pretrained GPT-2 weights.
-- [ ] Do not call `from_pretrained("gpt2")`.
-- [ ] Do not load pretrained music-generation checkpoints.
-- [ ] Train final model weights on the selected MIDI token dataset.
-- [ ] Use a MIDI/REMI tokenizer, not the GPT-2 text tokenizer.
+- [x] Do not load pretrained GPT-2 weights.
+- [x] Do not call `from_pretrained("gpt2")`.
+- [x] Do not load pretrained music-generation checkpoints.
+- [x] Train final model weights on the selected MIDI token dataset.
+- [x] Use a MIDI/REMI tokenizer, not the GPT-2 text tokenizer.
 - [ ] Produce these final files:
   - `submission/workbook.html`
   - `submission/video_url.txt`
@@ -119,6 +119,18 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 - [x] Create draft evaluation tables and figures under `outputs/evaluation/`.
 - [x] Create a draft `notebooks/workbook.ipynb` report from available results.
 
+### Phase 1 Extension: Final-Scale Nottingham Transformer Pass
+
+**Purpose:** Move beyond smoke training and make the Transformer credible as the main assignment model.
+
+- [x] Expand the Nottingham MIDI-only subset to 500 files under ignored raw data paths.
+- [x] Add bounded final-scale Transformer controls: larger context/model config, dropout, best validation checkpoint saving, and multiple sampling settings.
+- [x] Train a scratch GPT-2-style Transformer on the 500-file Nottingham split with `block_size=256`, `n_embd=256`, `n_layer=4`, and `n_head=4`.
+- [x] Save the best validation checkpoint under `outputs/checkpoints/nottingham_final/`.
+- [x] Generate at least 20 Transformer candidates per task using multiple temperatures and top-k settings.
+- [x] Rank Transformer candidates and copy the selected draft outputs to `outputs/candidates/selected/nottingham_final/`.
+- [x] Create final-scale Nottingham evaluation tables and figures under `outputs/evaluation/nottingham_final/`.
+
 ## Phase 2: Tokenization
 
 **Primary: MidiTok REMI**
@@ -161,8 +173,8 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 - [ ] Do not call any `from_pretrained(...)` method.
 - [ ] Train with next-token cross entropy on MIDI token windows.
 - [ ] Track train loss, validation loss, validation perplexity, and runtime.
-- [ ] Save checkpoints under `outputs/checkpoints/`.
-- [ ] Generate both unconditioned and prefix-conditioned samples with temperature and top-k controls.
+- [x] Save checkpoints under `outputs/checkpoints/`.
+- [x] Generate both unconditioned and prefix-conditioned samples with temperature and top-k controls.
 
 **Fallback trigger:** Move to Phase 5 if `transformers` is unavailable, HuggingFace APIs are incompatible, or scratch model training/generation cannot run after one focused compatibility pass.
 
@@ -198,11 +210,11 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 
 **Purpose:** Move from proof-of-pipeline to the preferred final dataset.
 
-- [ ] Use only MAESTRO MIDI files, not audio.
-- [ ] Start with a small number of MIDI files.
-- [ ] Filter files that fail parsing, have extreme token lengths, or create unusable decode results.
-- [ ] Truncate or window long token sequences rather than training on full pieces.
-- [ ] Re-run tokenizer statistics, train/validation split, baseline evaluation, and neural training.
+- [x] Use only MAESTRO MIDI files, not audio.
+- [x] Start with a small number of MIDI files.
+- [x] Filter files that fail parsing, have extreme token lengths, or create unusable decode results.
+- [x] Truncate or window long token sequences rather than training on full pieces.
+- [x] Re-run tokenizer statistics, train/validation split, baseline evaluation, and neural training.
 
 **Fallback trigger:** Stay with Nottingham/tiny symbolic MIDI if MAESTRO download, parsing, token length, or runtime blocks progress.
 
@@ -238,7 +250,7 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 - [ ] Duration/rhythm histogram: train vs generated.
 - [ ] Token diversity metrics: unique tokens, unique n-grams, repetition rate.
 - [ ] Conditioned continuation analysis: prefix length, generated length, boundary behavior, qualitative listening notes.
-- [ ] Discussion of why perplexity does not fully measure musical quality.
+- [x] Discussion of why perplexity does not fully measure musical quality.
 
 **Verification:** Notebook contains at least one table or figure for data, modeling, evaluation, and generated-output analysis.
 

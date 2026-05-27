@@ -7,6 +7,7 @@ import json
 import math
 import random
 import sys
+import time
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -133,6 +134,12 @@ def train_transformer(
     epochs: int,
     max_steps: int,
     lr: float,
+    n_embd: int,
+    n_layer: int,
+    n_head: int,
+    dropout: float,
+    checkpoint_dir: Path | None,
+    eval_interval: int,
 ) -> tuple[GPT2LMHeadModel, dict[str, object]]:
     train_batches = make_batches(train_windows, block_size, batch_size)
     valid_batches = make_batches(valid_windows, block_size, batch_size)
@@ -140,9 +147,12 @@ def train_transformer(
         vocab_size=max(vocab_size, 8),
         n_positions=block_size,
         n_ctx=block_size,
-        n_embd=DEFAULT_TRANSFORMER_EMBED,
-        n_layer=DEFAULT_TRANSFORMER_LAYERS,
-        n_head=DEFAULT_TRANSFORMER_HEADS,
+        n_embd=n_embd,
+        n_layer=n_layer,
+        n_head=n_head,
+        resid_pdrop=dropout,
+        embd_pdrop=dropout,
+        attn_pdrop=dropout,
         bos_token_id=0,
         eos_token_id=1,
     )
@@ -151,9 +161,14 @@ def train_transformer(
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     losses: list[float] = []
+    eval_history: list[dict[str, float | int]] = []
+    best_valid_loss = float("inf")
+    best_checkpoint_path: Path | None = None
+    started = time.perf_counter()
     steps = 0
     model.train()
     for _epoch in range(epochs):
+        random.shuffle(train_batches)
         for inputs, labels in train_batches:
             result = model(input_ids=inputs.to(device), labels=labels.to(device))
             loss = result.loss
@@ -165,11 +180,46 @@ def train_transformer(
             optimizer.zero_grad()
             losses.append(float(loss.detach().cpu()))
             steps += 1
+            if eval_interval > 0 and steps % eval_interval == 0:
+                valid_loss = evaluate_loss(model, valid_batches, device)
+                eval_history.append({"step": steps, "valid_loss": valid_loss})
+                if valid_loss < best_valid_loss:
+                    best_valid_loss = valid_loss
+                    if checkpoint_dir is not None:
+                        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                        best_checkpoint_path = checkpoint_dir / "best_transformer.pt"
+                        torch.save(
+                            {
+                                "model_state_dict": model.state_dict(),
+                                "config": config.to_dict(),
+                                "step": steps,
+                                "valid_loss": valid_loss,
+                            },
+                            best_checkpoint_path,
+                        )
             if steps >= max_steps:
                 break
         if steps >= max_steps:
             break
     valid_loss = evaluate_loss(model, valid_batches, device)
+    if valid_loss < best_valid_loss:
+        best_valid_loss = valid_loss
+        if checkpoint_dir is not None:
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            best_checkpoint_path = checkpoint_dir / "best_transformer.pt"
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "config": config.to_dict(),
+                    "step": steps,
+                    "valid_loss": valid_loss,
+                },
+                best_checkpoint_path,
+            )
+    if best_checkpoint_path is not None and best_checkpoint_path.exists():
+        checkpoint = torch.load(best_checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        valid_loss = float(checkpoint["valid_loss"])
     metrics = {
         "model_class": model.__class__.__name__,
         "pretrained_loaded": False,
@@ -177,6 +227,10 @@ def train_transformer(
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "block_size": block_size,
         "batch_size": batch_size,
+        "n_embd": n_embd,
+        "n_layer": n_layer,
+        "n_head": n_head,
+        "dropout": dropout,
         "epochs_requested": epochs,
         "max_steps": max_steps,
         "steps_completed": steps,
@@ -186,6 +240,11 @@ def train_transformer(
         "valid_loss": valid_loss,
         "valid_perplexity": math.exp(valid_loss) if valid_loss < 20 else float("inf"),
         "losses_finite": all(math.isfinite(loss) for loss in losses) and math.isfinite(valid_loss),
+        "best_valid_loss": best_valid_loss,
+        "best_valid_perplexity": math.exp(best_valid_loss) if best_valid_loss < 20 else float("inf"),
+        "best_checkpoint": str(best_checkpoint_path.relative_to(ROOT)) if best_checkpoint_path else None,
+        "eval_history": eval_history,
+        "runtime_seconds": time.perf_counter() - started,
     }
     return model, metrics
 
@@ -227,6 +286,63 @@ def decode_with_retries(tokenizer: object, candidates: list[list[int]], output_p
         except Exception as exc:  # noqa: BLE001 - reports candidate decode failures.
             errors.append(f"{type(exc).__name__}: {exc}")
     return False, 0, " | ".join(errors[-3:])
+
+
+def parse_number_list(raw: str, cast: object) -> list[object]:
+    return [cast(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+def format_temperature(value: float) -> str:
+    return str(value).replace(".", "p")
+
+
+def generate_transformer_candidates(
+    model: GPT2LMHeadModel,
+    tokenizer: object,
+    train_seed: int,
+    prefix: list[int],
+    output_dir: Path,
+    vocab_size: int,
+    block_size: int,
+    generate_tokens: int,
+    temperatures: list[float],
+    top_ks: list[int],
+    candidate_count: int,
+) -> dict[str, dict[str, object]]:
+    outputs: dict[str, dict[str, object]] = {}
+    for task_name, seed_prefix in {
+        "unconditioned": [train_seed],
+        "conditioned": prefix,
+    }.items():
+        for temperature in temperatures:
+            for top_k in top_ks:
+                for index in range(candidate_count):
+                    max_new = generate_tokens - len(seed_prefix) if task_name == "conditioned" else generate_tokens - 1
+                    ids = sample_transformer(
+                        model,
+                        prefix=seed_prefix,
+                        max_new_tokens=max(1, max_new),
+                        vocab_size=vocab_size,
+                        block_size=block_size,
+                        temperature=temperature,
+                        top_k=top_k,
+                    )
+                    name = (
+                        f"transformer_{task_name}_temp{format_temperature(temperature)}_"
+                        f"topk{top_k}_idx{index:02d}"
+                    )
+                    path = output_dir / f"{name}.mid"
+                    valid, notes, error = decode_with_retries(tokenizer, [ids], path)
+                    outputs[name] = {
+                        "path": str(path.relative_to(ROOT)),
+                        "valid": valid,
+                        "note_count": notes,
+                        "temperature": temperature,
+                        "top_k": top_k,
+                        "candidate_index": index,
+                        "error": error,
+                    }
+    return outputs
 
 
 def token_stats(sequences: list[list[int]]) -> dict[str, float]:
@@ -308,7 +424,16 @@ def parse_args() -> object:
     parser.add_argument("--max-steps", type=int, default=DEFAULT_TRANSFORMER_MAX_STEPS)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_TRANSFORMER_BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=DEFAULT_TRANSFORMER_LR)
+    parser.add_argument("--n-embd", type=int, default=DEFAULT_TRANSFORMER_EMBED)
+    parser.add_argument("--n-layer", type=int, default=DEFAULT_TRANSFORMER_LAYERS)
+    parser.add_argument("--n-head", type=int, default=DEFAULT_TRANSFORMER_HEADS)
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--checkpoint-dir", default=None)
+    parser.add_argument("--eval-interval", type=int, default=0)
     parser.add_argument("--generate-tokens", type=int, default=DEFAULT_GENERATE_TOKENS)
+    parser.add_argument("--candidate-count", type=int, default=1)
+    parser.add_argument("--temperatures", default=str(DEFAULT_TEMPERATURE))
+    parser.add_argument("--top-ks", default=str(DEFAULT_TOP_K))
     return parser.parse_args()
 
 
@@ -325,6 +450,9 @@ def main() -> None:
     metrics_dir = Path(args.metrics_dir)
     if not metrics_dir.is_absolute():
         metrics_dir = ROOT / metrics_dir
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else None
+    if checkpoint_dir is not None and not checkpoint_dir.is_absolute():
+        checkpoint_dir = ROOT / checkpoint_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
@@ -361,40 +489,43 @@ def main() -> None:
         epochs=args.epochs,
         max_steps=args.max_steps,
         lr=args.lr,
+        n_embd=args.n_embd,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        dropout=args.dropout,
+        checkpoint_dir=checkpoint_dir,
+        eval_interval=args.eval_interval,
     )
 
     prefix = valid_windows[0][: min(args.block_size // 2, len(valid_windows[0]))]
     markov_uncond = markov.sample(args.generate_tokens, prefix=[train_windows[0][0]])
     markov_cond = markov.sample(args.generate_tokens, prefix=prefix)
-    transformer_uncond = sample_transformer(
-        model,
-        prefix=[train_windows[0][0]],
-        max_new_tokens=args.generate_tokens - 1,
-        vocab_size=tokenizer.vocab_size,
-        block_size=args.block_size,
-        temperature=DEFAULT_TEMPERATURE,
-        top_k=DEFAULT_TOP_K,
-    )
-    transformer_cond = sample_transformer(
-        model,
-        prefix=prefix,
-        max_new_tokens=max(1, args.generate_tokens - len(prefix)),
-        vocab_size=tokenizer.vocab_size,
-        block_size=args.block_size,
-        temperature=DEFAULT_TEMPERATURE,
-        top_k=DEFAULT_TOP_K,
-    )
+    temperatures = [float(value) for value in parse_number_list(args.temperatures, float)]
+    top_ks = [int(value) for value in parse_number_list(args.top_ks, int)]
 
     outputs = {}
     for name, candidates in {
         "markov_unconditioned": [markov_uncond],
         "markov_conditioned": [markov_cond],
-        "transformer_unconditioned": [transformer_uncond, markov_uncond],
-        "transformer_conditioned": [transformer_cond, markov_cond],
     }.items():
         path = output_dir / f"{name}.mid"
         valid, notes, error = decode_with_retries(tokenizer, candidates, path)
         outputs[name] = {"path": str(path.relative_to(ROOT)), "valid": valid, "note_count": notes, "error": error}
+    outputs.update(
+        generate_transformer_candidates(
+            model=model,
+            tokenizer=tokenizer,
+            train_seed=train_windows[0][0],
+            prefix=prefix,
+            output_dir=output_dir,
+            vocab_size=tokenizer.vocab_size,
+            block_size=args.block_size,
+            generate_tokens=args.generate_tokens,
+            temperatures=temperatures,
+            top_ks=top_ks,
+            candidate_count=args.candidate_count,
+        )
+    )
 
     pitch_hist = pitch_class_histogram(midi_files)
     pitch_hist_path = metrics_dir / "pitch_class_histogram.csv"
@@ -422,6 +553,13 @@ def main() -> None:
         },
         "transformer": transformer_metrics,
         "outputs": outputs,
+        "generation": {
+            "generate_tokens": args.generate_tokens,
+            "temperatures": temperatures,
+            "top_ks": top_ks,
+            "candidate_count_per_setting": args.candidate_count,
+            "transformer_candidate_count": len([key for key in outputs if key.startswith("transformer_")]),
+        },
         "metrics": {
             "manifest": str(manifest_path.relative_to(ROOT)),
             "pitch_class_histogram": str(pitch_hist_path.relative_to(ROOT)),

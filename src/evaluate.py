@@ -15,6 +15,9 @@ class CandidateMetrics:
     dataset: str
     task_type: str
     model_type: str
+    temperature: float | None
+    top_k: int | None
+    candidate_index: int | None
     valid: bool
     note_count: int
     duration_seconds: float
@@ -83,13 +86,42 @@ def repeated_pitch_bigram_rate(notes: list[tuple[int, int, int]]) -> float:
 def infer_candidate_labels(path: Path) -> tuple[str, str, str]:
     parts = path.parts
     dataset = "unknown"
-    for part in parts:
-        if part in {"nottingham_subset", "maestro_subset", "nottingham_smoke"}:
-            dataset = part.replace("_subset", "")
+    if "candidates" in parts:
+        idx = parts.index("candidates")
+        if idx + 1 < len(parts):
+            dataset = parts[idx + 1]
+            if dataset == "selected" and idx + 2 < len(parts):
+                dataset = parts[idx + 2]
+    for suffix in ("_subset", "_smoke"):
+        if dataset.endswith(suffix):
+            dataset = dataset[: -len(suffix)]
     stem = path.stem
-    model_type = "transformer" if stem.startswith("transformer") else "markov"
+    model_type = "transformer" if "transformer" in stem else "markov"
     task_type = "conditioned" if "conditioned" in stem and "unconditioned" not in stem else "unconditioned"
     return dataset, task_type, model_type
+
+
+def infer_sampling_settings(path: Path) -> tuple[float | None, int | None, int | None]:
+    temperature = None
+    top_k = None
+    candidate_index = None
+    for part in path.stem.split("_"):
+        if part.startswith("temp"):
+            try:
+                temperature = float(part.removeprefix("temp").replace("p", "."))
+            except ValueError:
+                temperature = None
+        elif part.startswith("topk"):
+            try:
+                top_k = int(part.removeprefix("topk"))
+            except ValueError:
+                top_k = None
+        elif part.startswith("idx"):
+            try:
+                candidate_index = int(part.removeprefix("idx"))
+            except ValueError:
+                candidate_index = None
+    return temperature, top_k, candidate_index
 
 
 def score_candidate(metrics: CandidateMetrics) -> float:
@@ -106,6 +138,7 @@ def score_candidate(metrics: CandidateMetrics) -> float:
 
 def analyze_candidate(path: Path) -> CandidateMetrics:
     dataset, task_type, model_type = infer_candidate_labels(path)
+    temperature, top_k, candidate_index = infer_sampling_settings(path)
     try:
         notes, ticks_per_beat = read_note_events(path)
         valid = len(notes) > 0
@@ -139,6 +172,9 @@ def analyze_candidate(path: Path) -> CandidateMetrics:
         dataset=dataset,
         task_type=task_type,
         model_type=model_type,
+        temperature=temperature,
+        top_k=top_k,
+        candidate_index=candidate_index,
         valid=valid,
         note_count=len(notes),
         duration_seconds=duration_seconds,

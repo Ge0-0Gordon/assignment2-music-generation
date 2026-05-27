@@ -31,8 +31,18 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
         writer.writerows(rows)
 
 
+def run_dir(base: Path, dataset: str) -> Path:
+    direct = base / dataset
+    if direct.exists():
+        return direct
+    subset = base / f"{dataset}_subset"
+    if subset.exists():
+        return subset
+    return direct
+
+
 def candidate_files(dataset: str) -> list[Path]:
-    root = ROOT / "outputs" / "candidates" / f"{dataset}_subset"
+    root = run_dir(ROOT / "outputs" / "candidates", dataset)
     return sorted(
         path
         for path in root.glob("*.mid*")
@@ -40,7 +50,11 @@ def candidate_files(dataset: str) -> list[Path]:
     )
 
 
-def select_candidates(metrics: list[dict[str, object]], dataset: str) -> dict[str, dict[str, object]]:
+def select_candidates(
+    metrics: list[dict[str, object]],
+    dataset: str,
+    transformer_only: bool = False,
+) -> dict[str, dict[str, object]]:
     selected: dict[str, dict[str, object]] = {}
     for task in ("unconditioned", "conditioned"):
         task_rows = [
@@ -48,6 +62,8 @@ def select_candidates(metrics: list[dict[str, object]], dataset: str) -> dict[st
             for row in metrics
             if row["dataset"] == dataset and row["task_type"] == task and row["valid"]
         ]
+        if transformer_only:
+            task_rows = [row for row in task_rows if row["model_type"] == "transformer"]
         task_rows.sort(key=lambda row: (row["score"], row["model_type"] == "transformer"), reverse=True)
         if task_rows:
             selected[task] = task_rows[0]
@@ -69,7 +85,7 @@ def copy_selected(selected: dict[str, dict[str, object]], dataset: str) -> list[
 
 
 def plot_token_lengths(dataset: str, figures_dir: Path) -> str:
-    csv_path = ROOT / "outputs" / "metrics" / f"{dataset}_subset" / "token_length_distribution.csv"
+    csv_path = run_dir(ROOT / "outputs" / "metrics", dataset) / "token_length_distribution.csv"
     lengths = []
     with csv_path.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
@@ -87,7 +103,7 @@ def plot_token_lengths(dataset: str, figures_dir: Path) -> str:
 
 
 def plot_pitch_histogram(dataset: str, selected: dict[str, dict[str, object]], figures_dir: Path) -> str | None:
-    train_csv = ROOT / "outputs" / "metrics" / f"{dataset}_subset" / "pitch_class_histogram.csv"
+    train_csv = run_dir(ROOT / "outputs" / "metrics", dataset) / "pitch_class_histogram.csv"
     if not selected:
         return None
     candidate = selected.get("unconditioned") or next(iter(selected.values()))
@@ -123,6 +139,7 @@ def main() -> None:
     parser = ArgumentParser(description="Analyze and rank generated MIDI candidates.")
     parser.add_argument("--datasets", nargs="+", default=["nottingham", "maestro"])
     parser.add_argument("--output-dir", default="outputs/evaluation")
+    parser.add_argument("--transformer-only-selected", action="store_true")
     args = parser.parse_args()
 
     output_dir = ROOT / args.output_dir
@@ -138,7 +155,7 @@ def main() -> None:
     figure_rows = []
 
     for dataset in args.datasets:
-        summary_path = ROOT / "outputs" / "metrics" / f"{dataset}_subset" / "summary.json"
+        summary_path = run_dir(ROOT / "outputs" / "metrics", dataset) / "summary.json"
         if not summary_path.exists():
             continue
         summary = read_summary(summary_path)
@@ -170,7 +187,7 @@ def main() -> None:
         )
         for candidate_path in candidate_files(dataset):
             candidate_rows.append(asdict(analyze_candidate(candidate_path)))
-        selected = select_candidates(candidate_rows, dataset)
+        selected = select_candidates(candidate_rows, dataset, transformer_only=args.transformer_only_selected)
         selected_rows.extend(copy_selected(selected, dataset))
         token_fig = plot_token_lengths(dataset, figures_dir)
         figure_rows.append({"dataset": dataset, "figure": token_fig, "kind": "token_length_distribution"})
