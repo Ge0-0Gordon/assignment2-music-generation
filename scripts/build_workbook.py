@@ -131,21 +131,30 @@ def main() -> None:
             "much stronger validation perplexity and longer selected candidates."
         ),
         nbf.v4.new_markdown_cell(
-            "## 7. Task 1: Symbolic Unconditioned Generation\n\n"
+            "## 7. Reproducible Training Commands\n\n"
+            "The current training workflow supports full or bounded dataset runs, "
+            "best-checkpoint saving, resume from checkpoint, checkpoint-only "
+            "candidate generation, and candidate ranking. Long training should be "
+            "run manually from PowerShell using the commands in "
+            "`docs/training_commands.md`; this notebook is a draft report and does "
+            "not launch long jobs itself."
+        ),
+        nbf.v4.new_markdown_cell(
+            "## 8. Task 1: Symbolic Unconditioned Generation\n\n"
             "For unconditioned generation, the sampler starts from a short seed and "
             "generates new MIDI tokens. Candidate files are decoded, parsed, and "
             "ranked by validity, note count, duration, pitch range, polyphony, and "
             "repetition heuristics."
         ),
         nbf.v4.new_markdown_cell(
-            "## 8. Task 2: Prefix-Conditioned Continuation\n\n"
+            "## 9. Task 2: Prefix-Conditioned Continuation\n\n"
             "For conditioned continuation, a validation MIDI prefix is used as the "
             "prompt. The model samples additional tokens after that prefix, and "
             "the resulting sequence is decoded to MIDI. This tests whether the "
             "same next-token model can generate in context."
         ),
         nbf.v4.new_markdown_cell(
-            "## 9. Evaluation\n\n"
+            "## 10. Evaluation\n\n"
             "Candidate MIDI files are checked for parseability and nonzero notes. "
             "The ranking table below is a rough quantitative screen, not a "
             "substitute for listening.\n\n"
@@ -173,7 +182,7 @@ def main() -> None:
             )
         ),
         nbf.v4.new_markdown_cell(
-            "## 10. Related Work Notes\n\n"
+            "## 11. Related Work Notes\n\n"
             "This project is aligned with symbolic music generation methods from "
             "the course material, especially next-event prediction over symbolic "
             "music representations. The most relevant references for the final "
@@ -182,7 +191,7 @@ def main() -> None:
             "baselines, Nottingham, and MAESTRO."
         ),
         nbf.v4.new_markdown_cell(
-            "## 11. Discussion, Limitations, and Future Work\n\n"
+            "## 12. Discussion, Limitations, and Future Work\n\n"
             "The pipeline now produces valid MIDI candidates for both tasks. The "
             "main limitations are musical quality, heuristic candidate selection, "
             "and the fact that validation perplexity does not directly measure "
@@ -190,7 +199,7 @@ def main() -> None:
             "listen to the selected files and add qualitative observations."
         ),
         nbf.v4.new_markdown_cell(
-            "## 12. Current Artifacts and Remaining Submission Steps\n\n"
+            "## 13. Current Artifacts and Remaining Submission Steps\n\n"
             "Current generated artifacts live under `outputs/`, including metrics "
             "tables, figures, and selected candidate MIDI files. These are draft "
             "artifacts only. Final submission files have not been created yet.\n\n"

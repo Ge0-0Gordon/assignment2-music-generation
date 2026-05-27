@@ -134,12 +134,15 @@ def train_transformer(
     epochs: int,
     max_steps: int,
     lr: float,
+    weight_decay: float,
     n_embd: int,
     n_layer: int,
     n_head: int,
     dropout: float,
+    grad_clip: float,
     checkpoint_dir: Path | None,
     eval_interval: int,
+    resume_checkpoint: Path | None,
 ) -> tuple[GPT2LMHeadModel, dict[str, object]]:
     train_batches = make_batches(train_windows, block_size, batch_size)
     valid_batches = make_batches(valid_windows, block_size, batch_size)
@@ -159,11 +162,22 @@ def train_transformer(
     model = GPT2LMHeadModel(config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     losses: list[float] = []
     eval_history: list[dict[str, float | int]] = []
     best_valid_loss = float("inf")
     best_checkpoint_path: Path | None = None
+    resumed_from = None
+    resumed_step = 0
+    if resume_checkpoint is not None:
+        checkpoint = torch.load(resume_checkpoint, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer_state = checkpoint.get("optimizer_state_dict")
+        if optimizer_state is not None:
+            optimizer.load_state_dict(optimizer_state)
+        best_valid_loss = float(checkpoint.get("valid_loss", best_valid_loss))
+        resumed_step = int(checkpoint.get("step", 0))
+        resumed_from = str(resume_checkpoint.relative_to(ROOT))
     started = time.perf_counter()
     steps = 0
     model.train()
@@ -175,7 +189,7 @@ def train_transformer(
             if not torch.isfinite(loss):
                 raise RuntimeError("non-finite transformer loss")
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
             optimizer.zero_grad()
             losses.append(float(loss.detach().cpu()))
@@ -191,8 +205,9 @@ def train_transformer(
                         torch.save(
                             {
                                 "model_state_dict": model.state_dict(),
+                                "optimizer_state_dict": optimizer.state_dict(),
                                 "config": config.to_dict(),
-                                "step": steps,
+                                "step": resumed_step + steps,
                                 "valid_loss": valid_loss,
                             },
                             best_checkpoint_path,
@@ -210,8 +225,9 @@ def train_transformer(
             torch.save(
                 {
                     "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
                     "config": config.to_dict(),
-                    "step": steps,
+                    "step": resumed_step + steps,
                     "valid_loss": valid_loss,
                 },
                 best_checkpoint_path,
@@ -227,13 +243,18 @@ def train_transformer(
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "block_size": block_size,
         "batch_size": batch_size,
+        "learning_rate": lr,
+        "weight_decay": weight_decay,
         "n_embd": n_embd,
         "n_layer": n_layer,
         "n_head": n_head,
         "dropout": dropout,
+        "grad_clip": grad_clip,
         "epochs_requested": epochs,
         "max_steps": max_steps,
         "steps_completed": steps,
+        "total_steps_including_resume": resumed_step + steps,
+        "resume_checkpoint": resumed_from,
         "train_loss_first": losses[0] if losses else None,
         "train_loss_last": losses[-1] if losses else None,
         "train_loss_mean": sum(losses) / max(len(losses), 1),
@@ -245,6 +266,48 @@ def train_transformer(
         "best_checkpoint": str(best_checkpoint_path.relative_to(ROOT)) if best_checkpoint_path else None,
         "eval_history": eval_history,
         "runtime_seconds": time.perf_counter() - started,
+    }
+    return model, metrics
+
+
+def load_transformer_for_generation(
+    checkpoint_path: Path,
+    fallback_vocab_size: int,
+    fallback_block_size: int,
+) -> tuple[GPT2LMHeadModel, dict[str, object]]:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    config_dict = checkpoint.get("config")
+    if config_dict is None:
+        config = GPT2Config(
+            vocab_size=max(fallback_vocab_size, 8),
+            n_positions=fallback_block_size,
+            n_ctx=fallback_block_size,
+            n_embd=128,
+            n_layer=2,
+            n_head=4,
+            bos_token_id=0,
+            eos_token_id=1,
+        )
+    else:
+        config = GPT2Config(**config_dict)
+    model = GPT2LMHeadModel(config)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.to(device)
+    metrics = {
+        "model_class": model.__class__.__name__,
+        "pretrained_loaded": False,
+        "device": str(device),
+        "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
+        "block_size": int(config.n_positions),
+        "batch_size": None,
+        "n_embd": int(config.n_embd),
+        "n_layer": int(config.n_layer),
+        "n_head": int(config.n_head),
+        "dropout": float(config.resid_pdrop),
+        "checkpoint_loaded": str(checkpoint_path.relative_to(ROOT)),
+        "checkpoint_step": int(checkpoint.get("step", 0)),
+        "checkpoint_valid_loss": checkpoint.get("valid_loss"),
     }
     return model, metrics
 
@@ -412,6 +475,7 @@ def write_dataset_summary(path: Path, summary: dict[str, object]) -> None:
 
 def parse_args() -> object:
     parser = ArgumentParser(description="Run a bounded symbolic MIDI training pipeline.")
+    parser.add_argument("--mode", choices=["train_generate", "generate"], default="train_generate")
     parser.add_argument("--dataset-name", required=True)
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -424,22 +488,26 @@ def parse_args() -> object:
     parser.add_argument("--max-steps", type=int, default=DEFAULT_TRANSFORMER_MAX_STEPS)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_TRANSFORMER_BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=DEFAULT_TRANSFORMER_LR)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--n-embd", type=int, default=DEFAULT_TRANSFORMER_EMBED)
     parser.add_argument("--n-layer", type=int, default=DEFAULT_TRANSFORMER_LAYERS)
     parser.add_argument("--n-head", type=int, default=DEFAULT_TRANSFORMER_HEADS)
     parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--checkpoint-dir", default=None)
+    parser.add_argument("--resume-checkpoint", default=None)
     parser.add_argument("--eval-interval", type=int, default=0)
     parser.add_argument("--generate-tokens", type=int, default=DEFAULT_GENERATE_TOKENS)
     parser.add_argument("--candidate-count", type=int, default=1)
     parser.add_argument("--temperatures", default=str(DEFAULT_TEMPERATURE))
     parser.add_argument("--top-ks", default=str(DEFAULT_TOP_K))
+    parser.add_argument("--seed", type=int, default=SEED)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    set_seed(SEED)
+    set_seed(args.seed)
 
     input_dir = Path(args.input_dir)
     if not input_dir.is_absolute():
@@ -453,10 +521,16 @@ def main() -> None:
     checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else None
     if checkpoint_dir is not None and not checkpoint_dir.is_absolute():
         checkpoint_dir = ROOT / checkpoint_dir
+    resume_checkpoint = Path(args.resume_checkpoint) if args.resume_checkpoint else None
+    if resume_checkpoint is not None and not resume_checkpoint.is_absolute():
+        resume_checkpoint = ROOT / resume_checkpoint
+    if args.mode == "generate" and resume_checkpoint is None:
+        raise ValueError("--mode generate requires --resume-checkpoint")
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
-    midi_files = discover_midi_files([input_dir])[: args.max_files]
+    discovered_files = discover_midi_files([input_dir])
+    midi_files = discovered_files if args.max_files <= 0 else discovered_files[: args.max_files]
     if len(midi_files) < 2:
         raise ValueError("Need at least two MIDI files for train/validation split")
     train_files, valid_files = split_files(midi_files, args.valid_fraction)
@@ -480,24 +554,51 @@ def main() -> None:
     markov.fit(train_windows)
     markov_perplexity = markov.perplexity(valid_windows)
 
-    model, transformer_metrics = train_transformer(
-        train_windows=train_windows,
-        valid_windows=valid_windows,
-        vocab_size=tokenizer.vocab_size,
-        block_size=args.block_size,
-        batch_size=args.batch_size,
-        epochs=args.epochs,
-        max_steps=args.max_steps,
-        lr=args.lr,
-        n_embd=args.n_embd,
-        n_layer=args.n_layer,
-        n_head=args.n_head,
-        dropout=args.dropout,
-        checkpoint_dir=checkpoint_dir,
-        eval_interval=args.eval_interval,
-    )
+    if args.mode == "generate":
+        model, transformer_metrics = load_transformer_for_generation(
+            checkpoint_path=resume_checkpoint,
+            fallback_vocab_size=tokenizer.vocab_size,
+            fallback_block_size=args.block_size,
+        )
+        valid_batches = make_batches(valid_windows, int(transformer_metrics["block_size"]), args.batch_size)
+        valid_loss = evaluate_loss(model, valid_batches, next(model.parameters()).device)
+        transformer_metrics.update(
+            {
+                "steps_completed": 0,
+                "total_steps_including_resume": transformer_metrics["checkpoint_step"],
+                "train_loss_first": None,
+                "train_loss_last": None,
+                "train_loss_mean": None,
+                "valid_loss": valid_loss,
+                "valid_perplexity": math.exp(valid_loss) if valid_loss < 20 else float("inf"),
+                "losses_finite": math.isfinite(valid_loss),
+                "best_checkpoint": str(resume_checkpoint.relative_to(ROOT)),
+                "runtime_seconds": 0.0,
+            }
+        )
+    else:
+        model, transformer_metrics = train_transformer(
+            train_windows=train_windows,
+            valid_windows=valid_windows,
+            vocab_size=tokenizer.vocab_size,
+            block_size=args.block_size,
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            max_steps=args.max_steps,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            n_embd=args.n_embd,
+            n_layer=args.n_layer,
+            n_head=args.n_head,
+            dropout=args.dropout,
+            grad_clip=args.grad_clip,
+            checkpoint_dir=checkpoint_dir,
+            eval_interval=args.eval_interval,
+            resume_checkpoint=resume_checkpoint,
+        )
 
-    prefix = valid_windows[0][: min(args.block_size // 2, len(valid_windows[0]))]
+    generation_block_size = int(transformer_metrics["block_size"])
+    prefix = valid_windows[0][: min(generation_block_size // 2, len(valid_windows[0]))]
     markov_uncond = markov.sample(args.generate_tokens, prefix=[train_windows[0][0]])
     markov_cond = markov.sample(args.generate_tokens, prefix=prefix)
     temperatures = [float(value) for value in parse_number_list(args.temperatures, float)]
@@ -519,7 +620,7 @@ def main() -> None:
             prefix=prefix,
             output_dir=output_dir,
             vocab_size=tokenizer.vocab_size,
-            block_size=args.block_size,
+            block_size=generation_block_size,
             generate_tokens=args.generate_tokens,
             temperatures=temperatures,
             top_ks=top_ks,

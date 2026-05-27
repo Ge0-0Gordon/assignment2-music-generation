@@ -20,6 +20,156 @@ Commands run from:
 C:\Users\GD\OneDrive\Desktop\CSE253\assignment2-music-generation
 ```
 
+## 2026-05-26: Training Workflow Hardening and Short Verification
+
+### Scope
+
+- Continued from the recovered Nottingham final-scale run.
+- Did not create final submission files.
+- Did not run a long formal training job.
+- Did not download datasets.
+- Reused local Nottingham and MAESTRO MIDI data under `data/`.
+- Hardened the training script for user-run long jobs.
+
+### Local Data Confirmed
+
+```text
+Nottingham full MIDI path: data/nottingham-dataset-master/MIDI
+Nottingham top-level MIDI files: 1034
+MAESTRO local MIDI zip: data/maestro-v3.0.0-midi.zip
+MAESTRO bounded extracted path: data/raw/maestro_final/midi
+MAESTRO bounded extracted MIDI files: 120
+Zip files present: data/maestro-v3.0.0-midi.zip, data/nottingham-dataset-master.zip
+```
+
+### Existing Nottingham Final-Scale Results Confirmed
+
+```text
+best checkpoint: outputs/checkpoints/nottingham_final/best_transformer.pt
+summary: outputs/metrics/nottingham_final/summary.json
+selected unconditioned: outputs/candidates/selected/nottingham_final/unconditioned_transformer.mid
+selected conditioned: outputs/candidates/selected/nottingham_final/conditioned_transformer.mid
+```
+
+Metrics from `outputs/metrics/nottingham_final/summary.json`:
+
+```text
+file_count: 500
+train/valid split: 450/50
+block_size: 256
+n_embd: 256
+n_layer: 4
+n_head: 4
+dropout: 0.1
+steps_completed: 3000
+params: 3,356,160
+valid_loss: 2.9285693168640137
+valid_perplexity: 18.70085634877218
+train_loss_last: 0.7876027822494507
+```
+
+Selected MIDI validation:
+
+```text
+outputs/candidates/selected/nottingham_final/unconditioned_transformer.mid: valid, 176 notes, 93.25 seconds
+outputs/candidates/selected/nottingham_final/conditioned_transformer.mid: valid, 164 notes, 93.75 seconds
+```
+
+### Code and Documentation Changes
+
+- Updated `.gitignore` to ignore local datasets, zip archives, outputs, checkpoints, candidate MIDI, evaluation outputs, Python caches, and model checkpoints.
+- Updated `scripts/prepare_dataset.py` so MAESTRO preparation prefers local zip files and uses metadata to select shorter MIDI-only files.
+- Updated `scripts/train_main.py` with:
+  - `--mode train_generate|generate`
+  - `--resume-checkpoint`
+  - `--seed`
+  - `--weight-decay`
+  - `--grad-clip`
+  - `--max-files 0` full-dataset mode
+  - checkpoint-only candidate generation
+  - best checkpoint resume support
+- Updated `src/evaluate.py` so selected files named `unconditioned_transformer.mid` are labeled as Transformer outputs.
+- Added `docs/training_commands.md` with copy-ready Nottingham and MAESTRO train/resume/generate/evaluate commands.
+- Updated `scripts/build_workbook.py` and rebuilt `notebooks/workbook.ipynb` as a draft report.
+- Updated `docs/project_plan.md` to reflect the completed training-command workflow.
+
+### Commands Run
+
+```powershell
+git status --short
+Get-ChildItem -Force -Path data
+Get-ChildItem -Path outputs\checkpoints -Recurse -File
+Get-ChildItem -Path outputs\evaluation -Recurse -File
+Get-ChildItem -Path data\nottingham-dataset-master\MIDI -File -Filter *.mid | Measure-Object
+Get-ChildItem -Path data\raw\maestro_final\midi -File -Filter *.midi | Measure-Object
+conda run -n cse253 python -c "import ast, pathlib; files=[pathlib.Path('scripts/train_main.py'), pathlib.Path('scripts/prepare_dataset.py'), pathlib.Path('scripts/build_workbook.py'), pathlib.Path('src/evaluate.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('syntax_ok', len(files))"
+conda run -n cse253 python scripts\train_main.py --help
+conda run -n cse253 python scripts\train_main.py --dataset-name nottingham_verify --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\verify_nottingham --metrics-dir outputs\metrics\verify_nottingham --max-files 24 --block-size 64 --stride 64 --valid-fraction 0.2 --epochs 1 --max-steps 8 --batch-size 4 --lr 0.0003 --weight-decay 0.01 --n-embd 64 --n-layer 2 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\verify_nottingham --eval-interval 4 --generate-tokens 96 --candidate-count 1 --temperatures '0.8' --top-ks '20' --seed 253
+conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name nottingham_verify_generate --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\verify_nottingham_generate --metrics-dir outputs\metrics\verify_nottingham_generate --max-files 24 --block-size 64 --stride 64 --valid-fraction 0.2 --batch-size 4 --resume-checkpoint outputs\checkpoints\verify_nottingham\best_transformer.pt --generate-tokens 96 --candidate-count 1 --temperatures '0.8' --top-ks '20' --seed 253
+conda run -n cse253 python scripts\train_main.py --dataset-name maestro_verify --input-dir data\raw\maestro_final\midi --output-dir outputs\candidates\verify_maestro --metrics-dir outputs\metrics\verify_maestro --max-files 24 --block-size 64 --stride 128 --valid-fraction 0.2 --epochs 1 --max-steps 8 --batch-size 4 --lr 0.0003 --weight-decay 0.01 --n-embd 64 --n-layer 2 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\verify_maestro --eval-interval 4 --generate-tokens 96 --candidate-count 1 --temperatures '0.8' --top-ks '20' --seed 253
+conda run -n cse253 python scripts\train_main.py --dataset-name nottingham_verify_resume --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\verify_nottingham_resume --metrics-dir outputs\metrics\verify_nottingham_resume --max-files 24 --block-size 64 --stride 64 --valid-fraction 0.2 --epochs 1 --max-steps 2 --batch-size 4 --lr 0.0003 --weight-decay 0.01 --n-embd 64 --n-layer 2 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\verify_nottingham_resume --resume-checkpoint outputs\checkpoints\verify_nottingham\best_transformer.pt --eval-interval 1 --generate-tokens 64 --candidate-count 1 --temperatures '0.8' --top-ks '20' --seed 253
+```
+
+### Short Verification Results
+
+Nottingham short training:
+
+```text
+files: 24
+train/valid: 19/5
+steps_completed: 8
+train_loss_first: 6.243983745574951
+train_loss_last: 6.168376445770264
+valid_loss: 6.150714874267578
+valid_perplexity: 469.05258057742844
+best_checkpoint: outputs/checkpoints/verify_nottingham/best_transformer.pt
+transformer candidates: valid unconditioned and conditioned MIDI
+```
+
+Nottingham checkpoint-only generation:
+
+```text
+checkpoint: outputs/checkpoints/verify_nottingham/best_transformer.pt
+valid_loss: 6.150714874267578
+valid_perplexity: 469.05258057742844
+generated transformer candidates: valid unconditioned and conditioned MIDI
+```
+
+Nottingham resume:
+
+```text
+resume checkpoint: outputs/checkpoints/verify_nottingham/best_transformer.pt
+additional steps: 2
+total_steps_including_resume: 10
+valid_loss: 6.119503974914551
+valid_perplexity: 454.6391261489731
+generated transformer candidates: valid unconditioned and conditioned MIDI
+```
+
+MAESTRO short training:
+
+```text
+files: 24
+train/valid: 19/5
+steps_completed: 8
+train_loss_first: 6.232507228851318
+train_loss_last: 6.182765007019043
+valid_loss: 6.178953548957562
+valid_perplexity: 482.4867932768834
+best_checkpoint: outputs/checkpoints/verify_maestro/best_transformer.pt
+transformer candidates: valid unconditioned and conditioned MIDI
+```
+
+### Constraint Checks
+
+```text
+No from_pretrained("gpt2") call.
+No GPT-2 text tokenizer use.
+No pretrained music-generation checkpoint use.
+Training commands use conda run -n cse253 python.
+Data, zip archives, model checkpoints, and outputs are ignored by git.
+```
+
 Observed results:
 
 - `pwd`: confirmed repository root.

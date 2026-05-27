@@ -30,6 +30,7 @@
 
 - `docs/project_plan.md`: this implementation plan.
 - `docs/execution_log.md`: chronological execution notes, environment checks, commands run, results, and fallback decisions.
+- `docs/training_commands.md`: reproducible long-training, resume, generation, and evaluation commands.
 - `src/config.py`: shared paths, seeds, dataset limits, tokenizer/model hyperparameters.
 - `src/data.py`: MIDI discovery, dataset split, token window creation.
 - `src/tokenizers.py`: MidiTok REMI wrapper and custom fallback event tokenizer.
@@ -125,6 +126,7 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 
 - [x] Expand the Nottingham MIDI-only subset to 500 files under ignored raw data paths.
 - [x] Add bounded final-scale Transformer controls: larger context/model config, dropout, best validation checkpoint saving, and multiple sampling settings.
+- [x] Add resume-from-checkpoint and checkpoint-only candidate generation controls.
 - [x] Train a scratch GPT-2-style Transformer on the 500-file Nottingham split with `block_size=256`, `n_embd=256`, `n_layer=4`, and `n_head=4`.
 - [x] Save the best validation checkpoint under `outputs/checkpoints/nottingham_final/`.
 - [x] Generate at least 20 Transformer candidates per task using multiple temperatures and top-k settings.
@@ -268,6 +270,7 @@ conda run -n cse253 python -c "import importlib.util; mods=['torch','miditok','s
 - [x] Include Task 1 generated MIDI discussion.
 - [x] Include Task 2 prefix and continuation discussion.
 - [x] Include related work: Module 3, REMI/Pop Music Transformer, Music Transformer, Performance RNN, Markov/n-gram models, MAESTRO/Nottingham.
+- [x] Include current training-command workflow and note that long runs are user-run from PowerShell.
 - [ ] Include final submission file list.
 
 **Verification:** A reader can understand the full pipeline and results without running the notebook.
