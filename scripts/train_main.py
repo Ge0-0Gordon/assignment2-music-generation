@@ -275,6 +275,7 @@ def train_transformer(
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     losses: list[float] = []
     eval_history: list[dict[str, float | int]] = []
+    training_history: list[dict[str, float | int | None]] = []
     best_valid_loss = float("inf")
     best_checkpoint_path: Path | None = None
     resumed_from = None
@@ -306,7 +307,16 @@ def train_transformer(
             steps += 1
             if eval_interval > 0 and steps % eval_interval == 0:
                 valid_loss = evaluate_loss(model, valid_batches, device)
+                row = {
+                    "step": steps,
+                    "total_step": resumed_step + steps,
+                    "train_loss": float(loss.detach().cpu()),
+                    "valid_loss": valid_loss,
+                    "valid_perplexity": math.exp(valid_loss) if valid_loss < 20 else float("inf"),
+                    "learning_rate": optimizer.param_groups[0]["lr"],
+                }
                 eval_history.append({"step": steps, "valid_loss": valid_loss})
+                training_history.append(row)
                 if valid_loss < best_valid_loss:
                     best_valid_loss = valid_loss
                     if checkpoint_dir is not None:
@@ -327,6 +337,16 @@ def train_transformer(
         if steps >= max_steps:
             break
     valid_loss = evaluate_loss(model, valid_batches, device)
+    training_history.append(
+        {
+            "step": steps,
+            "total_step": resumed_step + steps,
+            "train_loss": losses[-1] if losses else None,
+            "valid_loss": valid_loss,
+            "valid_perplexity": math.exp(valid_loss) if valid_loss < 20 else float("inf"),
+            "learning_rate": optimizer.param_groups[0]["lr"],
+        }
+    )
     if valid_loss < best_valid_loss:
         best_valid_loss = valid_loss
         if checkpoint_dir is not None:
@@ -375,6 +395,7 @@ def train_transformer(
         "best_valid_perplexity": math.exp(best_valid_loss) if best_valid_loss < 20 else float("inf"),
         "best_checkpoint": str(best_checkpoint_path.relative_to(ROOT)) if best_checkpoint_path else None,
         "eval_history": eval_history,
+        "training_history": training_history,
         "runtime_seconds": time.perf_counter() - started,
     }
     return model, metrics
@@ -583,6 +604,16 @@ def write_dataset_summary(path: Path, summary: dict[str, object]) -> None:
         writer.writerow(row)
 
 
+def write_training_history(path: Path, history: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["step", "total_step", "train_loss", "valid_loss", "valid_perplexity", "learning_rate"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in history:
+            writer.writerow({field: row.get(field) for field in fieldnames})
+
+
 def parse_args() -> object:
     parser = ArgumentParser(description="Run a bounded symbolic MIDI training pipeline.")
     parser.add_argument("--mode", choices=["train_generate", "generate"], default="train_generate")
@@ -786,8 +817,12 @@ def main() -> None:
     pitch_hist_path = metrics_dir / "pitch_class_histogram.csv"
     token_lengths_path = metrics_dir / "token_length_distribution.csv"
     dataset_summary_path = metrics_dir / "dataset_summary.csv"
+    training_history_path = metrics_dir / "training_history.csv"
     write_pitch_hist(pitch_hist_path, pitch_hist)
     write_token_lengths(token_lengths_path, midi_files, sequence_by_file)
+    training_history = transformer_metrics.get("training_history", [])
+    if training_history or not training_history_path.exists():
+        write_training_history(training_history_path, training_history)
 
     summary = {
         "dataset_name": args.dataset_name,
@@ -824,6 +859,7 @@ def main() -> None:
         "metrics": {
             "manifest": str(manifest_path.relative_to(ROOT)),
             "skipped_files": str(skipped_files_path.relative_to(ROOT)),
+            "training_history": str(training_history_path.relative_to(ROOT)),
             "pitch_class_histogram": str(pitch_hist_path.relative_to(ROOT)),
             "token_length_distribution": str(token_lengths_path.relative_to(ROOT)),
             "dataset_summary": str(dataset_summary_path.relative_to(ROOT)),
