@@ -19,6 +19,27 @@ if str(ROOT) not in sys.path:
 from src.evaluate import analyze_candidate  # noqa: E402
 
 
+PREFIX_FIELDS = [
+    "primer_token_count",
+    "generated_token_count",
+    "full_token_count",
+    "primer_duration",
+    "full_duration",
+    "continuation_duration",
+    "primer_note_count",
+    "full_note_count",
+    "continuation_note_count",
+    "continuation_notes_per_second",
+    "continuation_pitch_range",
+    "continuation_unique_pitch_count",
+    "continuation_max_simultaneous_notes",
+    "continuation_repeated_pitch_bigram_rate",
+    "continuation_usable",
+    "continuation_reject_reason",
+    "continuation_score",
+]
+
+
 def resolve(path: str) -> Path:
     resolved = Path(path)
     if not resolved.is_absolute():
@@ -94,6 +115,13 @@ def candidate_files(paths: list[str]) -> list[Path]:
     return sorted(set(files))
 
 
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     default_fieldnames = [
@@ -155,6 +183,24 @@ def load_generation_summaries(paths: list[str]) -> dict[str, dict[str, object]]:
     return records
 
 
+def load_prefix_metrics(candidate_dirs: list[str]) -> dict[str, dict[str, object]]:
+    records: dict[str, dict[str, object]] = {}
+    for raw in candidate_dirs:
+        root = resolve(raw)
+        if not root.exists():
+            continue
+        for ranking_path in root.rglob("candidate_ranking.csv"):
+            for row in read_csv_rows(ranking_path):
+                payload = {key: row.get(key, "") for key in PREFIX_FIELDS if key in row}
+                if not any(value not in ("", None) for value in payload.values()):
+                    continue
+                for key in ("path", "source_path", "selected_path"):
+                    candidate_path = row.get(key)
+                    if candidate_path:
+                        records[str(candidate_path).replace("\\", "/")] = payload
+    return records
+
+
 def main() -> None:
     parser = ArgumentParser(description="Diagnose MAESTRO candidate MIDI files.")
     parser.add_argument(
@@ -171,6 +217,7 @@ def main() -> None:
     args = parser.parse_args()
 
     generation_records = load_generation_summaries(args.metrics_summaries)
+    prefix_records = load_prefix_metrics(args.candidate_dirs)
     rows = []
     for path in candidate_files(args.candidate_dirs):
         metrics = asdict(analyze_candidate(path))
@@ -195,6 +242,9 @@ def main() -> None:
             ):
                 if key in generation_record:
                     metrics[key] = generation_record[key]
+        prefix_record = prefix_records.get(metrics["path"].replace("\\", "/"))
+        if prefix_record:
+            metrics.update(prefix_record)
         rows.append(metrics)
     rows.sort(key=lambda row: (row["task_type"], str(row["source_group"]), -float(row["score"])))
 

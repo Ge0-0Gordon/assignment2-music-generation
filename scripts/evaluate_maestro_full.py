@@ -131,11 +131,13 @@ def indexed_candidate_rows(indexed_dir: Path, dataset_name: str) -> tuple[list[d
             if candidate_path:
                 path = resolve(candidate_path)
                 if path.exists():
+                    original_candidate = dict(candidate)
                     refreshed = asdict(analyze_candidate(path))
                     refreshed["dataset"] = dataset_name
                     refreshed["source_path"] = str(path.relative_to(ROOT))
                     refreshed["run"] = run_dir.name
-                    candidate = refreshed
+                    original_candidate.update(refreshed)
+                    candidate = original_candidate
             ranking_rows.append(candidate)
         for selected in read_csv_rows(run_dir / "selected_candidates.csv"):
             selected_path = selected.get("selected_path", "")
@@ -151,6 +153,9 @@ def indexed_candidate_rows(indexed_dir: Path, dataset_name: str) -> tuple[list[d
             row["model_type"] = "transformer"
             row["run"] = run_dir.name
             row["selected_path"] = str(path.relative_to(ROOT))
+            for key, value in selected.items():
+                if key not in row:
+                    row[key] = value
             selected_rows.append(row)
     return ranking_rows, selected_rows
 
