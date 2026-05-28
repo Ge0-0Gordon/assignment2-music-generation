@@ -24,6 +24,44 @@ data\nottingham-dataset-master\MIDI
 
 This is the recommended final route. Use `--max-files 0` for all discovered MIDI files, or set an integer such as `500` for a bounded run.
 
+### Recommended Final Route: nottingham_final_ctx512
+
+This is the current recommended Task 1 route. It uses Nottingham only, starts from scratch, and does not use MAESTRO checkpoints or pretrained weights.
+
+Full 10k-step training:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --dataset-name nottingham_final_ctx512 --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_final_ctx512 --metrics-dir outputs\metrics\nottingham_final_ctx512 --max-files 0 --block-size 512 --stride 256 --valid-fraction 0.1 --epochs 100 --max-steps 10000 --batch-size 16 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\nottingham_final_ctx512 --eval-interval 250 --generate-tokens 768 --candidate-count 50 --decode-retry-attempts 1 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --unconditioned-mode structural_seeded --unconditioned-prefix-tokens 32 --seed 253
+```
+
+Generate final candidate pools from the best checkpoint:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name nottingham_final_ctx512 --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_final_ctx512\run_bos_sources --metrics-dir outputs\metrics\nottingham_final_ctx512\run_bos --max-files 0 --block-size 512 --stride 256 --valid-fraction 0.1 --batch-size 16 --resume-checkpoint outputs\checkpoints\nottingham_final_ctx512\best_transformer.pt --generate-tokens 768 --candidate-count 50 --decode-retry-attempts 1 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --unconditioned-mode pure_bos --unconditioned-prefix-tokens 1 --seed 253
+conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name nottingham_final_ctx512 --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_final_ctx512\run_seeded_sources --metrics-dir outputs\metrics\nottingham_final_ctx512\run_seeded --max-files 0 --block-size 512 --stride 256 --valid-fraction 0.1 --batch-size 16 --resume-checkpoint outputs\checkpoints\nottingham_final_ctx512\best_transformer.pt --generate-tokens 768 --candidate-count 50 --decode-retry-attempts 1 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --unconditioned-mode structural_seeded --unconditioned-prefix-tokens 32 --seed 253
+conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name nottingham_final_ctx512 --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_final_ctx512\run_piece_start_128_sources --metrics-dir outputs\metrics\nottingham_final_ctx512\run_piece_start_128 --max-files 0 --block-size 512 --stride 256 --valid-fraction 0.1 --batch-size 16 --resume-checkpoint outputs\checkpoints\nottingham_final_ctx512\best_transformer.pt --generate-tokens 768 --candidate-count 50 --decode-retry-attempts 1 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --unconditioned-mode piece_start_seeded --unconditioned-prefix-tokens 128 --primer-source valid --seed 253
+conda run -n cse253 python scripts\train_main.py --mode generate --dataset-name nottingham_final_ctx512 --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_final_ctx512\run_piece_start_256_sources --metrics-dir outputs\metrics\nottingham_final_ctx512\run_piece_start_256 --max-files 0 --block-size 512 --stride 256 --valid-fraction 0.1 --batch-size 16 --resume-checkpoint outputs\checkpoints\nottingham_final_ctx512\best_transformer.pt --generate-tokens 768 --candidate-count 50 --decode-retry-attempts 1 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --unconditioned-mode piece_start_seeded --unconditioned-prefix-tokens 256 --primer-source valid --seed 253
+```
+
+Build indexed runs, split piece-start outputs, and evaluate:
+
+```powershell
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\nottingham_final_ctx512\run_bos_sources --output-dir outputs\candidates\final\nottingham_final_ctx512 --metrics-summary outputs\metrics\nottingham_final_ctx512\run_bos\summary.json --dataset-name nottingham_final_ctx512 --single-run-name run_nottingham_10k_bos --generation-mode-filter pure_bos
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\nottingham_final_ctx512\run_seeded_sources --output-dir outputs\candidates\final\nottingham_final_ctx512 --metrics-summary outputs\metrics\nottingham_final_ctx512\run_seeded\summary.json --dataset-name nottingham_final_ctx512 --single-run-name run_nottingham_10k_seeded --generation-mode-filter structural_seeded
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\nottingham_final_ctx512\run_piece_start_128_sources --output-dir outputs\candidates\final\nottingham_final_ctx512 --metrics-summary outputs\metrics\nottingham_final_ctx512\run_piece_start_128\summary.json --dataset-name nottingham_final_ctx512 --single-run-name run_nottingham_10k_piece_start_128 --generation-mode-filter piece_start_seeded
+conda run -n cse253 python scripts\build_indexed_candidates.py --source-dir outputs\candidates\nottingham_final_ctx512\run_piece_start_256_sources --output-dir outputs\candidates\final\nottingham_final_ctx512 --metrics-summary outputs\metrics\nottingham_final_ctx512\run_piece_start_256\summary.json --dataset-name nottingham_final_ctx512 --single-run-name run_nottingham_10k_piece_start_256 --generation-mode-filter piece_start_seeded
+conda run -n cse253 python scripts\split_piece_start_outputs.py outputs\candidates\final\nottingham_final_ctx512\run_nottingham_10k_piece_start_128 outputs\candidates\final\nottingham_final_ctx512\run_nottingham_10k_piece_start_256
+conda run -n cse253 python scripts\split_conditioned_outputs.py outputs\candidates\final\nottingham_final_ctx512\run_nottingham_10k_bos outputs\candidates\final\nottingham_final_ctx512\run_nottingham_10k_seeded outputs\candidates\final\nottingham_final_ctx512\run_nottingham_10k_piece_start_128 outputs\candidates\final\nottingham_final_ctx512\run_nottingham_10k_piece_start_256 --evaluation-dir outputs\evaluation\nottingham_final_ctx512
+conda run -n cse253 python scripts\evaluate_maestro_full.py --metrics-dir outputs\metrics\nottingham_final_ctx512 --indexed-dir outputs\candidates\final\nottingham_final_ctx512 --output-dir outputs\evaluation\nottingham_final_ctx512 --nottingham-summary outputs\metrics\nottingham_final\summary.json --nottingham-selected-dir outputs\candidates\selected\nottingham_final
+conda run -n cse253 python scripts\diagnose_maestro_candidates.py --candidate-dirs outputs\candidates\nottingham_final_ctx512 outputs\candidates\final\nottingham_final_ctx512 --output-csv outputs\evaluation\nottingham_final_ctx512\tables\candidate_diagnostics.csv --metrics-summaries outputs\metrics\nottingham_final_ctx512\run_bos\summary.json outputs\metrics\nottingham_final_ctx512\run_seeded\summary.json outputs\metrics\nottingham_final_ctx512\run_piece_start_128\summary.json outputs\metrics\nottingham_final_ctx512\run_piece_start_256\summary.json
+```
+
+Optional ctx1024 experiment, prepared but not the default:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --dataset-name nottingham_final_ctx1024 --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_final_ctx1024 --metrics-dir outputs\metrics\nottingham_final_ctx1024 --max-files 0 --block-size 1024 --stride 512 --valid-fraction 0.1 --epochs 100 --max-steps 10000 --batch-size 8 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\nottingham_final_ctx1024 --eval-interval 250 --generate-tokens 768 --candidate-count 50 --decode-retry-attempts 1 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --unconditioned-mode structural_seeded --unconditioned-prefix-tokens 32 --seed 253
+```
+
 ### Full Training
 
 5000-step starter run:

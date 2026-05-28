@@ -183,11 +183,87 @@ EXPERIMENTS = {
         "max_token_length": 32768,
         "max_polyphony": 32,
     },
+    "nottingham_final_ctx512": {
+        "dataset_name": "nottingham_final_ctx512",
+        "input_dir": "data/nottingham-dataset-master/MIDI",
+        "manifest_csv": "",
+        "output_dir": "outputs/candidates/nottingham_final_ctx512",
+        "metrics_dir": "outputs/metrics/nottingham_final_ctx512",
+        "checkpoint_dir": "outputs/checkpoints/nottingham_final_ctx512",
+        "final_indexed_dir": "outputs/candidates/final/nottingham_final_ctx512",
+        "evaluation_dir": "outputs/evaluation/nottingham_final_ctx512",
+        "resume_checkpoint": "",
+        "run_id": "run_nottingham_10k_seeded",
+        "lr": 0.0003,
+        "weight_decay": 0.01,
+        "max_steps": 10000,
+        "eval_interval": 250,
+        "block_size": 512,
+        "stride": 256,
+        "valid_fraction": 0.1,
+        "n_embd": 256,
+        "n_layer": 4,
+        "n_head": 4,
+        "dropout": 0.1,
+        "batch_size": 16,
+        "generate_tokens": 768,
+        "candidate_count": 50,
+        "temperatures": [0.7, 0.8, 0.9],
+        "top_ks": [20, 50],
+        "generation_mode": "structural_seeded",
+        "unconditioned_prefix_tokens": 32,
+        "primer_source": "valid",
+        "primer_index": None,
+        "min_notes": None,
+        "max_notes": None,
+        "min_notes_per_second": None,
+        "max_notes_per_second": None,
+        "max_token_length": None,
+        "max_polyphony": None,
+    },
+    "nottingham_final_ctx1024": {
+        "dataset_name": "nottingham_final_ctx1024",
+        "input_dir": "data/nottingham-dataset-master/MIDI",
+        "manifest_csv": "",
+        "output_dir": "outputs/candidates/nottingham_final_ctx1024",
+        "metrics_dir": "outputs/metrics/nottingham_final_ctx1024",
+        "checkpoint_dir": "outputs/checkpoints/nottingham_final_ctx1024",
+        "final_indexed_dir": "outputs/candidates/final/nottingham_final_ctx1024",
+        "evaluation_dir": "outputs/evaluation/nottingham_final_ctx1024",
+        "resume_checkpoint": "",
+        "run_id": "run_nottingham_10k_seeded",
+        "lr": 0.0003,
+        "weight_decay": 0.01,
+        "max_steps": 10000,
+        "eval_interval": 250,
+        "block_size": 1024,
+        "stride": 512,
+        "valid_fraction": 0.1,
+        "n_embd": 256,
+        "n_layer": 4,
+        "n_head": 4,
+        "dropout": 0.1,
+        "batch_size": 8,
+        "generate_tokens": 768,
+        "candidate_count": 50,
+        "temperatures": [0.7, 0.8, 0.9],
+        "top_ks": [20, 50],
+        "generation_mode": "structural_seeded",
+        "unconditioned_prefix_tokens": 32,
+        "primer_source": "valid",
+        "primer_index": None,
+        "min_notes": None,
+        "max_notes": None,
+        "min_notes_per_second": None,
+        "max_notes_per_second": None,
+        "max_token_length": None,
+        "max_polyphony": None,
+    },
 }
 
 
 CONFIG = BASE_CONFIG.copy()
-EXPERIMENT = "maestro_full"  # Change to "maestro_clean" for clean-subset retraining.
+EXPERIMENT = "nottingham_final_ctx512"  # Options include "nottingham_final_ctx1024", "maestro_full", "maestro_clean".
 
 
 def select_experiment(name):
@@ -198,9 +274,8 @@ def select_experiment(name):
     return CONFIG
 
 
-# Recommended maestro_clean defaults: block_size=256 or 1024 for separate ctx experiments,
-# stride=256, n_embd=256, n_layer=4, n_head=4, batch_size=16, lr=0.0003, max_steps=10000,
-# resume_checkpoint="" for from-scratch clean training.
+# Recommended Nottingham final defaults: ctx512 is the main route; ctx1024 is prepared but optional.
+# Both start from scratch when resume_checkpoint="" and use no pretrained weights.
 select_experiment(EXPERIMENT)
 CONFIG
             """
@@ -220,10 +295,12 @@ def run_command(args, *, check=True):
     return result
 
 
-manifest_path = PROJECT_ROOT / CONFIG["manifest_csv"]
+manifest_path = PROJECT_ROOT / CONFIG["manifest_csv"] if CONFIG.get("manifest_csv") else None
 input_dir = PROJECT_ROOT / CONFIG["input_dir"]
 
-if not manifest_path.exists():
+if manifest_path is None:
+    print("No manifest configured; train_main.py will discover MIDI files directly from:", input_dir)
+elif not manifest_path.exists():
     print("manifest missing:", manifest_path)
     print("Use the clean manifest preparation cell below if EXPERIMENT == 'maestro_clean'.")
     print("For maestro_full, run scripts/prepare_maestro_full.py manually after checking local data paths.")
@@ -233,7 +310,7 @@ else:
 midi_files = sorted(input_dir.rglob("*.mid")) + sorted(input_dir.rglob("*.midi"))
 print("midi_file_count:", len(midi_files))
 
-if manifest_path.exists():
+if manifest_path is not None and manifest_path.exists():
     manifest_df = pd.read_csv(manifest_path)
     display(manifest_df["split"].value_counts().rename_axis("split").reset_index(name="files"))
     display(manifest_df.head())
@@ -327,7 +404,6 @@ def train_command(config):
         "scripts/train_main.py",
         "--dataset-name", config["dataset_name"],
         "--input-dir", config["input_dir"],
-        "--manifest-csv", config["manifest_csv"],
         "--output-dir", config["output_dir"],
         "--metrics-dir", config["metrics_dir"],
         "--max-files", str(config["max_files"]),
@@ -356,6 +432,8 @@ def train_command(config):
         "--primer-source", config["primer_source"],
         "--seed", str(config["seed"]),
     ]
+    if config.get("manifest_csv"):
+        cmd.extend(["--manifest-csv", config["manifest_csv"]])
     if config.get("primer_index") is not None:
         cmd.extend(["--primer-index", str(config["primer_index"])])
     if config.get("resume_checkpoint"):
@@ -439,7 +517,6 @@ def generate_command(config):
         "--mode", "generate",
         "--dataset-name", config["dataset_name"],
         "--input-dir", config["input_dir"],
-        "--manifest-csv", config["manifest_csv"],
         "--output-dir", config["output_dir"],
         "--metrics-dir", config["metrics_dir"],
         "--max-files", str(config["max_files"]),
@@ -458,6 +535,8 @@ def generate_command(config):
         "--primer-source", config["primer_source"],
         "--seed", str(config["seed"]),
     ]
+    if config.get("manifest_csv"):
+        cmd.extend(["--manifest-csv", config["manifest_csv"]])
     if config.get("primer_index") is not None:
         cmd.extend(["--primer-index", str(config["primer_index"])])
     return add_optional_quality_args(cmd, config)
@@ -531,6 +610,43 @@ if selected_path.exists():
         print(getattr(row, "task_type"), PROJECT_ROOT / getattr(row, "selected_path"))
 else:
     print("No selected_candidates.csv yet.")
+            """
+        ),
+        markdown_cell("## 7a. Prefix / Continuation Diagnostics"),
+        code_cell(
+            r"""
+RUN_PREFIX_SPLIT = False  # Set True after indexed run folders exist.
+
+piece_start_dirs = [
+    PROJECT_ROOT / CONFIG["final_indexed_dir"] / "run_nottingham_10k_piece_start_128",
+    PROJECT_ROOT / CONFIG["final_indexed_dir"] / "run_nottingham_10k_piece_start_256",
+]
+conditioned_dirs = [
+    PROJECT_ROOT / CONFIG["final_indexed_dir"] / "run_nottingham_10k_bos",
+    PROJECT_ROOT / CONFIG["final_indexed_dir"] / "run_nottingham_10k_seeded",
+    *piece_start_dirs,
+]
+
+piece_cmd = [sys.executable, "scripts/split_piece_start_outputs.py", *[str(path.relative_to(PROJECT_ROOT)) for path in piece_start_dirs if path.exists()]]
+conditioned_cmd = [
+    sys.executable,
+    "scripts/split_conditioned_outputs.py",
+    *[str(path.relative_to(PROJECT_ROOT)) for path in conditioned_dirs if path.exists()],
+    "--evaluation-dir", CONFIG["evaluation_dir"],
+]
+
+print("Piece-start split command:")
+print(" ".join(piece_cmd) if len(piece_cmd) > 2 else "No piece-start run dirs found yet.")
+print("Conditioned split command:")
+print(" ".join(conditioned_cmd) if len(conditioned_cmd) > 4 else "No indexed run dirs found yet.")
+
+if RUN_PREFIX_SPLIT:
+    if len(piece_cmd) > 2:
+        run_command(piece_cmd)
+    if len(conditioned_cmd) > 4:
+        run_command(conditioned_cmd)
+else:
+    print("Prefix split not started. Set RUN_PREFIX_SPLIT = True after indexed runs exist.")
             """
         ),
         markdown_cell("## 8. Indexed Run Saving"),
