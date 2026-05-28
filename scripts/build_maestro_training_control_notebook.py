@@ -304,11 +304,52 @@ EXPERIMENTS = {
         "max_token_length": None,
         "max_polyphony": None,
     },
+    "nottingham_density_retrain": {
+        "dataset_name": "nottingham_density_retrain",
+        "input_dir": "data/nottingham-dataset-master/MIDI",
+        "manifest_csv": "",
+        "output_dir": "outputs/candidates/nottingham_density_retrain",
+        "metrics_dir": "outputs/metrics/nottingham_density_retrain",
+        "checkpoint_dir": "outputs/checkpoints/nottingham_density_retrain",
+        "final_indexed_dir": "outputs/candidates/final/nottingham_density_retrain",
+        "evaluation_dir": "outputs/evaluation/nottingham_density_retrain",
+        "resume_checkpoint": "",
+        "run_id": "run_density_conditioned_bigpool",
+        "lr": 0.0003,
+        "weight_decay": 0.01,
+        "max_steps": 20000,
+        "eval_interval": 250,
+        "block_size": 512,
+        "stride": 128,
+        "valid_fraction": 0.1,
+        "n_embd": 256,
+        "n_layer": 4,
+        "n_head": 4,
+        "dropout": 0.1,
+        "batch_size": 16,
+        "generate_tokens": 512,
+        "candidate_count": 100,
+        "temperatures": [0.7, 0.8, 0.9],
+        "top_ks": [20, 50],
+        "conditioned_prefix_count": 20,
+        "conditioned_prefix_tokens": 128,
+        "conditioned_candidates_per_prefix": 10,
+        "generation_mode": "density_conditioned",
+        "unconditioned_prefix_tokens": 32,
+        "primer_source": "valid",
+        "primer_index": None,
+        "min_notes": None,
+        "max_notes": None,
+        "min_notes_per_second": None,
+        "max_notes_per_second": None,
+        "max_token_length": None,
+        "max_polyphony": None,
+    },
 }
 
 
 CONFIG = BASE_CONFIG.copy()
-EXPERIMENT = "nottingham_final_retrain"  # Options include "nottingham_final_ctx512", "nottingham_final_ctx1024", "maestro_full", "maestro_clean".
+EXPERIMENT = "nottingham_density_retrain"  # Options include "nottingham_final_retrain", "nottingham_final_ctx512", "nottingham_final_ctx1024", "maestro_full", "maestro_clean".
 
 
 def select_experiment(name):
@@ -319,7 +360,7 @@ def select_experiment(name):
     return CONFIG
 
 
-# Recommended Nottingham final default: nottingham_final_retrain.
+# Recommended Nottingham density default: nottingham_density_retrain.
 # It starts from scratch when resume_checkpoint="" and uses no pretrained weights.
 select_experiment(EXPERIMENT)
 CONFIG
@@ -634,6 +675,65 @@ else:
         run_command(final_cmd)
     else:
         print("Final retrain generation not started. Set RUN_FINAL_RETRAIN_GENERATION = True to run it.")
+            """
+        ),
+        markdown_cell("## 6b. Nottingham Density Retrain"),
+        code_cell(
+            r"""
+def nottingham_density_retrain_command(config):
+    return [
+        sys.executable,
+        "scripts/train_generate_nottingham_density.py",
+        "--dataset-name", config["dataset_name"],
+        "--input-dir", config["input_dir"],
+        "--output-dir", config["output_dir"],
+        "--metrics-dir", config["metrics_dir"],
+        "--checkpoint-dir", config["checkpoint_dir"],
+        "--indexed-dir", config["final_indexed_dir"],
+        "--evaluation-dir", config["evaluation_dir"],
+        "--block-size", str(config["block_size"]),
+        "--stride", str(config["stride"]),
+        "--batch-size", str(config["batch_size"]),
+        "--max-steps", str(config["max_steps"]),
+        "--eval-interval", str(config["eval_interval"]),
+        "--lr", str(config["lr"]),
+        "--weight-decay", str(config["weight_decay"]),
+        "--n-embd", str(config["n_embd"]),
+        "--n-layer", str(config["n_layer"]),
+        "--n-head", str(config["n_head"]),
+        "--dropout", str(config["dropout"]),
+        "--grad-clip", "1.0",
+        "--generate-tokens", str(config["generate_tokens"]),
+        "--task1-candidate-count", str(config["candidate_count"]),
+        "--conditioned-prefix-count", str(config.get("conditioned_prefix_count", 20)),
+        "--conditioned-prefix-tokens", str(config.get("conditioned_prefix_tokens", 128)),
+        "--conditioned-candidates-per-prefix", str(config.get("conditioned_candidates_per_prefix", 10)),
+        "--temperatures", list_arg(config["temperatures"]),
+        "--top-ks", list_arg(config["top_ks"]),
+        "--seed", str(config["seed"]),
+    ]
+
+
+RUN_DENSITY_RETRAIN = False
+if CONFIG["dataset_name"] != "nottingham_density_retrain":
+    print("Switch EXPERIMENT to nottingham_density_retrain to use this density retrain cell.")
+else:
+    density_cmd = nottingham_density_retrain_command(CONFIG)
+    print("Density retrain command:")
+    print(" ".join(density_cmd))
+    if RUN_DENSITY_RETRAIN:
+        run_command(density_cmd)
+    else:
+        print("Density retrain not started. Set RUN_DENSITY_RETRAIN = True to run it.")
+
+print("Expected listening paths:")
+for relative in [
+    "outputs/candidates/final/nottingham_density_retrain/run_density_uncond_piece_start_128/continuation_only.mid",
+    "outputs/candidates/final/nottingham_density_retrain/run_density_uncond_piece_start_256/continuation_only.mid",
+    "outputs/candidates/final/nottingham_density_retrain/run_density_conditioned_bigpool/conditioned_continuation_only.mid",
+]:
+    path = PROJECT_ROOT / relative
+    print(relative, "exists=", path.exists())
             """
         ),
         markdown_cell("## 7. Candidate Evaluation / Ranking"),

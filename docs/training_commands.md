@@ -288,6 +288,22 @@ conda run -n cse253 python scripts\train_main.py --dataset-name maestro_clean --
 
 For longer context, create a separate experiment such as `maestro_clean_ctx512`; do not overwrite `maestro_full` or the first `maestro_clean` checkpoint.
 
+### Nottingham Density-Conditioned Retrain
+
+Use this route when vanilla Nottingham continuations are too sparse. It trains a separate scratch Transformer with density control tokens, density-balanced training windows, and lightly weighted note-event loss. It does not use MAESTRO checkpoints or pretrained weights.
+
+```powershell
+conda run -n cse253 python scripts\train_generate_nottingham_density.py --dataset-name nottingham_density_retrain --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_density_retrain --metrics-dir outputs\metrics\nottingham_density_retrain --checkpoint-dir outputs\checkpoints\nottingham_density_retrain --indexed-dir outputs\candidates\final\nottingham_density_retrain --evaluation-dir outputs\evaluation\nottingham_density_retrain --block-size 512 --stride 128 --batch-size 16 --max-steps 20000 --eval-interval 250 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --generate-tokens 512 --task1-candidate-count 100 --conditioned-prefix-count 20 --conditioned-prefix-tokens 128 --conditioned-candidates-per-prefix 10 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --seed 253
+```
+
+Primary listening files after the run:
+
+```text
+outputs\candidates\final\nottingham_density_retrain\run_density_uncond_piece_start_128\continuation_only.mid
+outputs\candidates\final\nottingham_density_retrain\run_density_uncond_piece_start_256\continuation_only.mid
+outputs\candidates\final\nottingham_density_retrain\run_density_conditioned_bigpool\conditioned_continuation_only.mid
+```
+
 ### Evaluate MAESTRO Full And Compare With Nottingham
 
 ```powershell
