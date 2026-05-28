@@ -259,11 +259,56 @@ EXPERIMENTS = {
         "max_token_length": None,
         "max_polyphony": None,
     },
+    "nottingham_final_retrain": {
+        "dataset_name": "nottingham_final_retrain",
+        "input_dir": "data/nottingham-dataset-master/MIDI",
+        "manifest_csv": "",
+        "output_dir": "outputs/candidates/nottingham_final_retrain",
+        "metrics_dir": "outputs/metrics/nottingham_final_retrain",
+        "checkpoint_dir": "outputs/checkpoints/nottingham_final_retrain",
+        "final_indexed_dir": "outputs/candidates/final/nottingham_final_retrain",
+        "evaluation_dir": "outputs/evaluation/nottingham_final_retrain",
+        "resume_checkpoint": "",
+        "run_id": "run_conditioned_bigpool",
+        "lr": 0.0003,
+        "weight_decay": 0.01,
+        "max_steps": 30000,
+        "eval_interval": 250,
+        "block_size": 512,
+        "stride": 256,
+        "valid_fraction": 0.1,
+        "n_embd": 256,
+        "n_layer": 4,
+        "n_head": 4,
+        "dropout": 0.1,
+        "batch_size": 16,
+        "generate_tokens": 64,
+        "candidate_count": 1,
+        "temperatures": [0.8],
+        "top_ks": [20],
+        "generation_mode": "structural_seeded",
+        "unconditioned_prefix_tokens": 32,
+        "primer_source": "valid",
+        "primer_index": None,
+        "final_generate_tokens": 768,
+        "task1_candidate_count": 100,
+        "conditioned_prefix_count": 20,
+        "conditioned_prefix_tokens": 128,
+        "conditioned_candidates_per_prefix": 10,
+        "final_temperatures": [0.7, 0.8, 0.9],
+        "final_top_ks": [20, 50],
+        "min_notes": None,
+        "max_notes": None,
+        "min_notes_per_second": None,
+        "max_notes_per_second": None,
+        "max_token_length": None,
+        "max_polyphony": None,
+    },
 }
 
 
 CONFIG = BASE_CONFIG.copy()
-EXPERIMENT = "nottingham_final_ctx512"  # Options include "nottingham_final_ctx1024", "maestro_full", "maestro_clean".
+EXPERIMENT = "nottingham_final_retrain"  # Options include "nottingham_final_ctx512", "nottingham_final_ctx1024", "maestro_full", "maestro_clean".
 
 
 def select_experiment(name):
@@ -274,8 +319,8 @@ def select_experiment(name):
     return CONFIG
 
 
-# Recommended Nottingham final defaults: ctx512 is the main route; ctx1024 is prepared but optional.
-# Both start from scratch when resume_checkpoint="" and use no pretrained weights.
+# Recommended Nottingham final default: nottingham_final_retrain.
+# It starts from scratch when resume_checkpoint="" and uses no pretrained weights.
 select_experiment(EXPERIMENT)
 CONFIG
             """
@@ -551,6 +596,44 @@ if RUN_GENERATION:
     run_command(cmd)
 else:
     print("Generation not started. Set RUN_GENERATION = True in this cell to run it.")
+            """
+        ),
+        markdown_cell("## 6a. Nottingham Final Retrain Runs"),
+        code_cell(
+            r"""
+def nottingham_final_retrain_command(config):
+    checkpoint = best_checkpoint_from_summary(config)
+    if not checkpoint:
+        raise RuntimeError("No checkpoint found. Train nottingham_final_retrain first.")
+    return [
+        sys.executable,
+        "scripts/generate_nottingham_final_retrain.py",
+        "--metrics-dir", config["metrics_dir"],
+        "--checkpoint", checkpoint,
+        "--indexed-dir", config["final_indexed_dir"],
+        "--evaluation-dir", config["evaluation_dir"],
+        "--generate-tokens", str(config.get("final_generate_tokens", 768)),
+        "--task1-candidate-count", str(config.get("task1_candidate_count", 100)),
+        "--conditioned-prefix-count", str(config.get("conditioned_prefix_count", 20)),
+        "--conditioned-prefix-tokens", str(config.get("conditioned_prefix_tokens", 128)),
+        "--conditioned-candidates-per-prefix", str(config.get("conditioned_candidates_per_prefix", 10)),
+        "--temperatures", list_arg(config.get("final_temperatures", config["temperatures"])),
+        "--top-ks", list_arg(config.get("final_top_ks", config["top_ks"])),
+        "--seed", str(config["seed"]),
+    ]
+
+
+RUN_FINAL_RETRAIN_GENERATION = False  # Set True after nottingham_final_retrain checkpoint exists.
+if CONFIG["dataset_name"] != "nottingham_final_retrain":
+    print("Switch EXPERIMENT to nottingham_final_retrain to use this final generation cell.")
+else:
+    final_cmd = nottingham_final_retrain_command(CONFIG)
+    print("Final retrain generation command:")
+    print(" ".join(final_cmd))
+    if RUN_FINAL_RETRAIN_GENERATION:
+        run_command(final_cmd)
+    else:
+        print("Final retrain generation not started. Set RUN_FINAL_RETRAIN_GENERATION = True to run it.")
             """
         ),
         markdown_cell("## 7. Candidate Evaluation / Ranking"),

@@ -127,8 +127,10 @@ def plot_pitch_histogram(train_csv: Path, selected_path: Path | None, out: Path)
 def indexed_candidate_rows(indexed_dir: Path, dataset_name: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     ranking_rows: list[dict[str, object]] = []
     selected_rows: list[dict[str, object]] = []
-    for run_dir in sorted(indexed_dir.glob("run_*")):
+    for run_dir in sorted(path for path in indexed_dir.iterdir() if path.is_dir()):
         if not run_dir.is_dir():
+            continue
+        if not (run_dir / "candidate_ranking.csv").exists():
             continue
         for candidate in read_csv_rows(run_dir / "candidate_ranking.csv"):
             candidate_path = candidate.get("source_path") or candidate.get("path")
@@ -151,10 +153,16 @@ def indexed_candidate_rows(indexed_dir: Path, dataset_name: str) -> tuple[list[d
             if not path.exists():
                 continue
             row = asdict(analyze_candidate(path))
-            if not row["usable"]:
+            continuation_usable = str(
+                selected.get("conditioned_continuation_usable") or selected.get("continuation_usable") or ""
+            ).lower() == "true"
+            if not row["usable"] and not continuation_usable:
                 continue
             row["dataset"] = dataset_name
-            row["model_type"] = "transformer"
+            selected_model_type = (selected.get("model_type") or "").strip()
+            if not selected_model_type:
+                selected_model_type = "markov" if "markov" in run_dir.name else "transformer"
+            row["model_type"] = selected_model_type
             row["run"] = run_dir.name
             row["selected_path"] = str(path.relative_to(ROOT))
             for key, value in selected.items():

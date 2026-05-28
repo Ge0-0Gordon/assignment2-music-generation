@@ -28,6 +28,38 @@ This is the recommended final route. Use `--max-files 0` for all discovered MIDI
 
 This is the current recommended Task 1 route. It uses Nottingham only, starts from scratch, and does not use MAESTRO checkpoints or pretrained weights.
 
+### Final Retrain Route: nottingham_final_retrain
+
+This is the current final Nottingham route for both Task 1 and Task 2. It trains a scratch GPT2-style causal Transformer on Nottingham only, then generates continuation-aware Transformer runs plus a Markov / n-gram baseline.
+
+Full 30000-step retraining command:
+
+```powershell
+conda run -n cse253 python scripts\train_main.py --dataset-name nottingham_final_retrain --input-dir data\nottingham-dataset-master\MIDI --output-dir outputs\candidates\nottingham_final_retrain --metrics-dir outputs\metrics\nottingham_final_retrain --max-files 0 --block-size 512 --stride 256 --valid-fraction 0.1 --epochs 100 --max-steps 30000 --batch-size 16 --lr 0.0003 --weight-decay 0.01 --n-embd 256 --n-layer 4 --n-head 4 --dropout 0.1 --grad-clip 1.0 --checkpoint-dir outputs\checkpoints\nottingham_final_retrain --eval-interval 250 --generate-tokens 64 --candidate-count 1 --decode-retry-attempts 1 --temperatures '0.8' --top-ks '20' --unconditioned-mode structural_seeded --unconditioned-prefix-tokens 32 --seed 253
+```
+
+Generate Task 1, Task 2 bigpool, and Markov baseline from the best checkpoint:
+
+```powershell
+conda run -n cse253 python scripts\generate_nottingham_final_retrain.py --metrics-dir outputs\metrics\nottingham_final_retrain --checkpoint outputs\checkpoints\nottingham_final_retrain\best_transformer.pt --indexed-dir outputs\candidates\final\nottingham_final_retrain --evaluation-dir outputs\evaluation\nottingham_final_retrain --generate-tokens 768 --task1-candidate-count 100 --conditioned-prefix-count 20 --conditioned-prefix-tokens 128 --conditioned-candidates-per-prefix 10 --temperatures '0.7,0.8,0.9' --top-ks '20,50' --seed 253
+```
+
+Refresh evaluation and diagnostics:
+
+```powershell
+conda run -n cse253 python scripts\evaluate_maestro_full.py --metrics-dir outputs\metrics\nottingham_final_retrain --indexed-dir outputs\candidates\final\nottingham_final_retrain --output-dir outputs\evaluation\nottingham_final_retrain --nottingham-summary outputs\metrics\nottingham_final\summary.json --nottingham-selected-dir outputs\candidates\selected\nottingham_final
+conda run -n cse253 python scripts\diagnose_maestro_candidates.py --candidate-dirs outputs\candidates\final\nottingham_final_retrain --output-csv outputs\evaluation\nottingham_final_retrain\tables\candidate_diagnostics.csv --metrics-summaries outputs\metrics\nottingham_final_retrain\summary.json
+```
+
+Primary listening paths after generation:
+
+```text
+outputs\candidates\final\nottingham_final_retrain\run_uncond_piece_start_256\continuation_only.mid
+outputs\candidates\final\nottingham_final_retrain\run_conditioned_bigpool\conditioned_continuation_only.mid
+outputs\candidates\final\nottingham_final_retrain\baseline_markov\symbolic_unconditioned_markov.mid
+outputs\candidates\final\nottingham_final_retrain\baseline_markov\symbolic_conditioned_markov.mid
+```
+
 Full 10k-step training:
 
 ```powershell
